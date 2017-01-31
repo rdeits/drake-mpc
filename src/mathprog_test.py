@@ -1,0 +1,2 @@
+import pydrake.mathematicalprogram
+
