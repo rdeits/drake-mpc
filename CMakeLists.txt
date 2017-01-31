@@ -9,6 +9,7 @@ ExternalProject_Add(drake
   GIT_SUBMODULES drake/doc/textbook
   CMAKE_ARGS
   	-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+  INSTALL_COMMAND ""
 )
 
 add_subdirectory(src)
