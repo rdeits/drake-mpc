@@ -5,7 +5,7 @@ include(ExternalProject)
 
 ExternalProject_Add(drake
   GIT_REPOSITORY git@github.com:rdeits/drake.git
-  GIT_TAG 7a2dcf20cbc8975b9061b7b5d979340b3bb57c03
+  GIT_TAG 9d918dd2a18ed8dc0bccbaffd35b444e0ad8f36a
   GIT_SUBMODULES drake/doc/textbook
   CMAKE_CACHE_ARGS
   	-DWITH_GUROBI:bool=ON
