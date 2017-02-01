@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+from itertools import combinations
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 
@@ -93,15 +94,49 @@ def get_linconstr_matrices(prog, vars, params):
             S[i, :] *= -1
     return G, W, S
 
+def linearly_independent_subset(G, active_indices):
+    num_constraints = min(len(active_indices), G.shape[1])
+    if num_constraints == 0:
+        return []
+    for Ai in combinations(active_indices, num_constraints):
+        GA = G[Ai,:]
+        if np.linalg.matrix_rank(GA) == num_constraints:
+            return Ai
+    raise ValueError("No linearly independent subset of rows could be found")
 
-print("H:", get_objective_matrix(prog, z, x))
-G, W, S = get_linconstr_matrices(prog, z, x)
-print("G:", G)
-print("W:", W)
-print("S:", S)
+
+def critical_region(model, vars, params):
+    H = get_objective_matrix(prog, vars, params)
+    z = prog.GetSolution(vars)
+    x = prog.GetSolution(params)
+    G, W, S = get_linconstr_matrices(prog, vars, params)
+
+    constraint_values = G.dot(z) - W - S.dot(x)
+    active_constraint_indices = [i for (i, v) in enumerate(constraint_values) \
+        if np.isclose(v, 0)]
+    print("active indices:", active_constraint_indices)
+    Ai = linearly_independent_subset(G, active_constraint_indices)
+    GA = G[Ai, :]
+    WA = W[Ai]
+    SA = S[Ai, :]
+    print("H:", H)
+    print("GA:", GA)
+
+    crmodel = mp.MathematicalProgram()
+    x = crmodel.NewContinuousVariables(len(params), "x")
+
+    if Ai:
+        lambdaA = -np.linalg.inv(GA.dot(np.linalg.inv(H)).dot(GA.T)).dot(WA + SA.dot(x))
+        z = -np.linalg.inv(H).dot(GA.T).dot(lambdaA)
+    constr_expr = G.dot(z) - S.dot(x) - W
+    for expr in constr_expr:
+        print("constraint:", expr <= 0)
+        prog.AddLinearConstraint(expr <= 0)
+    return crmodel
 
 
 result = prog.Solve()
 assert result == mp.SolutionResult.kSolutionFound
 
-print(prog.GetSolution(z))
+crmodel = critical_region(prog, z, x)
+
