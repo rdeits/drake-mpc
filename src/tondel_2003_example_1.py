@@ -117,9 +117,6 @@ if __name__ == '__main__':
     prog.AddLinearConstraint(x[1] == 0)
 
     dt = 0.05
-    A = np.array([[1, dt],
-                  [0, 1]])
-    b = np.array([dt**2, dt])
     H = np.array([[1.079, 0.076],
                   [0.076, 1.073]])
     F = np.array([[1.109, 1.036],
