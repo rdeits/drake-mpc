@@ -56,45 +56,48 @@ def linconstr_matrices(prog, vars, params):
             S[i, :] *= -1
     return G, W, S
 
-def linearly_independent_subset(G, active_indices):
-    num_constraints = min(len(active_indices), G.shape[1])
-    if num_constraints == 0:
-        return []
-    for Ai in combinations(active_indices, num_constraints):
-        GA = G[Ai,:]
-        if np.linalg.matrix_rank(GA) == num_constraints:
-            return Ai
-    raise ValueError("No linearly independent subset of rows could be found")
 
 
-def critical_region(model, vars, params):
-    H = objective_matrix(prog, vars, params)
+def active_constraints(prog, vars, params):
     z = prog.GetSolution(vars)
     x = prog.GetSolution(params)
     G, W, S = linconstr_matrices(prog, vars, params)
 
     constraint_values = G.dot(z) - W - S.dot(x)
-    active_constraint_indices = [i for (i, v) in enumerate(constraint_values) \
+    return [i for (i, v) in enumerate(constraint_values) \
         if np.isclose(v, 0)]
-    print("active indices:", active_constraint_indices)
-    Ai = linearly_independent_subset(G, active_constraint_indices)
+
+
+def critical_region(prog, vars, params):
+    H = objective_matrix(prog, vars, params)
+    G, W, S = linconstr_matrices(prog, vars, params)
+
+    Ai = active_constraints(prog, vars, params)
     GA = G[Ai, :]
     WA = W[Ai]
     SA = S[Ai, :]
     print("H:", H)
     print("GA:", GA)
+    if len(Ai) > 0 and (np.linalg.matrix_rank(GA) < GA.shape[0]):
+        raise ValueError("LICQ is violated, and we don't handle that yet")
 
     crmodel = mp.MathematicalProgram()
-    crvars = crmodel.NewContinuousVariables(len(params), "crvars")
+    x = crmodel.NewContinuousVariables(len(params), "x")
 
-    if Ai:
-        lambdaA = -np.linalg.inv(GA.dot(np.linalg.inv(H)).dot(GA.T)).dot(WA + SA.dot(crvars))
-        z = -np.linalg.inv(H).dot(GA.T).dot(lambdaA)
-    constr_expr = G.dot(z) - S.dot(crvars) - W
+    z = np.zeros((len(vars)))
+
+    if len(Ai) > 0:
+        lambdaA = -np.linalg.inv(GA.dot(np.linalg.inv(H)).dot(GA.T)).dot(WA + SA.dot(x))
+        z += -np.linalg.inv(H).dot(GA.T).dot(lambdaA)
+    constr_expr = G.dot(z) - S.dot(x) - W
     for expr in constr_expr:
         print("constraint:", expr <= 0)
         crmodel.AddLinearConstraint(expr <= 0)
-    return crmodel, crvars
+    if len(Ai) > 0:
+        lambda_constr = -np.linalg.inv((GA.dot(np.linalg.inv(H)).dot(GA)).T).dot(WA + SA.dot(x))
+        for expr in lambda_constr:
+            crmodel.AddLinearConstraint(expr >= 0)
+    return crmodel, x
 
 def feasible_set_polyhedron(model, vars):
     G, W, S = linconstr_matrices(model, vars, [])
@@ -114,9 +117,6 @@ if __name__ == '__main__':
     prog.AddLinearConstraint(x[1] == 0)
 
     dt = 0.05
-    A = np.array([[1, dt],
-                  [0, 1]])
-    b = np.array([dt**2, dt])
     H = np.array([[1.079, 0.076],
                   [0.076, 1.073]])
     F = np.array([[1.109, 1.036],
@@ -151,6 +151,6 @@ if __name__ == '__main__':
     p = feasible_set_polyhedron(crmodel, crvars)
     pts = np.vstack(p.generatorPoints())
 
-    plt.plot(pts[[0,1,2,3,0],0], pts[[0,1,2,3,0],1], "r.-")
+    plt.plot(pts[range(pts.shape[0]) + [0], 0], pts[range(pts.shape[0]) + [0], 1], "r.-")
     plt.show()
 
