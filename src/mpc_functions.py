@@ -6,7 +6,8 @@ import scipy.signal as sig
 import scipy.spatial as spat
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import irispy
+import irispy as iri
+import itertools as it
 
 def dare(A, B, Q, R):
     """
@@ -27,132 +28,6 @@ def dare(A, B, Q, R):
     K = - la.inv(B.T.dot(P).dot(B)+R).dot(B.T).dot(P).dot(A)
     return [P, K]
 
-def minPolyFacets(lhs, rhs):
-    """
-    minPolyFacets(lhs, rhs):
-    removes all the redundant constraints from a polytope
-    INPUTS:
-    [lhs, rhs] -> polytope definition {x | lhs*x <= rhs}
-    OUTPUTS:
-    [lhs_min, rhs_min] -> minimal polytope definition
-    min_ind            -> indices of the non-redundant constraints
-    """
-    n = lhs.shape[1]
-    m = rhs.shape[0]
-    #####
-    #####
-    ##### check for zero rows in the lhs
-    zero_pos = []
-    for i in range(0, m):
-        lhs_i_norm = np.linalg.norm(lhs[i,:])
-        rhs_i_norm = np.linalg.norm(rhs[i,0])
-        if lhs_i_norm < 1e-9:
-            if rhs_i_norm > 1e-6:
-                return [np.array([]).reshape(0,n), np.array([]).reshape(0,1)]
-            else:
-                zero_pos.append(i)
-    lhs = np.delete(lhs, zero_pos, 0)
-    rhs = np.delete(rhs, zero_pos, 0)
-    # look for identical constraints
-    equal_pos = []
-    for i in range(0, m):
-        poly_i = np.hstack((lhs[i,:], rhs[i,0]))
-        poly_i_unit = poly_i/(np.linalg.norm(poly_i))
-        for j in range(i+1, m):
-            poly_j = np.hstack((lhs[j,:], rhs[j,0]))
-            poly_j_unit = poly_j/(np.linalg.norm(poly_j))
-            if np.array_equal(poly_i_unit, poly_j_unit):
-                equal_pos.append(i)
-                break
-    lhs = np.delete(lhs, equal_pos, 0)
-    rhs = np.delete(rhs, equal_pos, 0)
-    m = rhs.shape[0]
-    #######
-    #######
-    #######
-    # fix big bounds to the solution
-    x_b = 1e6*np.ones((n,1))
-    # initialize minimum size polytope
-    lhs_min = np.array([]).reshape(0,n)
-    rhs_min = np.array([]).reshape(0,1)
-    for i in range(0, m):
-        # remove the ith constraint
-        lhs_i = np.delete(lhs, i, 0);
-        rhs_i = np.delete(rhs, i, 0);
-        # check redundancy
-        prog = mp.MathematicalProgram()
-        x = prog.NewContinuousVariables(n, "x")
-        for j in range(0, n):
-            prog.AddLinearConstraint(x[j] <= x_b[j])
-            prog.AddLinearConstraint(x[j] >= -x_b[j])
-        for j in range(0, m-1):
-            prog.AddLinearConstraint(lhs_i[j,:].dot(x) <= rhs_i[j])
-        cost_i = -lhs[i,:] + 1e-15 ### drake bug ???
-        prog.AddLinearCost(cost_i.dot(x))
-        solver = GurobiSolver()
-        result = solver.Solve(prog)
-        cost = lhs[i,:].dot(prog.GetSolution(x)) - rhs[i]
-        tollerance = 1e-6
-        if cost > tollerance:
-            # gather non-redundant constraints
-            lhs_min = np.vstack((lhs_min, lhs[i,:].reshape(1,n)))
-            rhs_min = np.vstack((rhs_min, rhs[i]))
-    return [lhs_min, rhs_min]
-
-def minPolyFacetsWithType(lhs_t1, lhs_t2, rhs_t1, rhs_t2):
-    """
-    minPolyFacets(lhs_t1, lhs_t2, rhs_t1, rhs_t2):
-    removes all the redundant facets from a polytope whose facets belong to two different groups
-    INPUTS:
-    [lhs_tk, rhs_tk] -> kth set of facets {x | lhs_tk * x <= rhs_tk}
-    OUTPUTS:
-    [lhs_min_typek, rhs_min_typek] -> non-redundant facets in the kth set
-    """
-    # initialize output
-    n_x = lhs_t1.shape[1]
-    lhs_min_type1 = np.array([]).reshape(0,n_x)
-    lhs_min_type2 = np.array([]).reshape(0,n_x)
-    rhs_min_type1 = np.array([]).reshape(0,1)
-    rhs_min_type2 = np.array([]).reshape(0,1)
-    # stack matrices of the two types
-    lhs = np.vstack((lhs_t1, lhs_t2))
-    rhs = np.vstack((rhs_t1, rhs_t2))
-    # remove redundant facets
-    [lhs_min, rhs_min] = minPolyFacets(lhs, rhs)
-    # check each facet's set
-    for i in range(0, rhs_min.shape[0]):
-        lhs_row = lhs_min[i,:]
-        rhs_row = rhs_min[i,:]
-        lhs_row_list = lhs_row.tolist()
-        lhs_t1_list = lhs_t1.tolist()
-        # if it's type1
-        if lhs_row_list in lhs_t1_list:
-            if rhs_t1[lhs_t1_list.index(lhs_row_list),0] == rhs_row:
-                lhs_min_type1 = np.vstack((lhs_min_type1, lhs_row))
-                rhs_min_type1 = np.vstack((rhs_min_type1, rhs_row))
-        # if it's type2
-        else:
-            lhs_min_type2 = np.vstack((lhs_min_type2, lhs_row))
-            rhs_min_type2 = np.vstack((rhs_min_type2, rhs_row))
-    return [lhs_min_type1, lhs_min_type2, rhs_min_type1, rhs_min_type2]
-
-def findPolyIndex(lhs_row, rhs_row, lhs, rhs):
-    """
-    findPolyIndex(lhs_row, rhs_row, lhs, rhs):
-    returns the row of (lhs, rhs) -> which coincides with (lhs_row,rhs_row)
-    INPUTS:
-    [lhs, rhs]         -> left- and right-hand-side of a set of linear equations
-    [lhs_row, rhs_row] -> left- and right-hand-side of a linear equations
-    OUTPUTS:
-    ind -> row index
-    """
-    poly_row = np.hstack((lhs_row, rhs_row))
-    poly = np.hstack((lhs, rhs))
-    ind = np.where(np.all(poly == poly_row, axis=1))[0]
-    ind = ind.tolist()[0]
-    return ind
-
-
 def moas(A, lhs_x, rhs_x):
     """
     moas(A, lhs_x, rhs_x):
@@ -171,36 +46,14 @@ def moas(A, lhs_x, rhs_x):
     t = 0
     convergence = False
     while convergence == False:
-        # set bounds to all variables to ensure the finiteness of the solution
-        x_ub = 1e6*np.ones((n_x,1))
-        x_lb = -x_ub
         # cost function jacobians for all i
         J = lhs_x.dot(np.linalg.matrix_power(A,t+1))
         # constraints to each LP
         cons_lhs = np.vstack([lhs_x.dot(np.linalg.matrix_power(A,k)) for k in range(0,t+1)])
         cons_rhs = np.vstack([rhs_x for k in range(0,t+1)])
-        # number of state constraints
+        ## list of all minima
         s = rhs_x.shape[0]
-        # vector of all minima
-        J_sol = np.zeros(s)
-        for i in range(0,s):
-            # assemble LP
-            prog = mp.MathematicalProgram()
-            x = prog.NewContinuousVariables(n_x, "x")
-            # impose constraints
-            for j in range(0, cons_rhs.shape[0]):
-                prog.AddLinearConstraint(cons_lhs[j,:].dot(x) <= cons_rhs[j])
-            # impose bounds
-            for j in range(0,n_x):
-                prog.AddLinearConstraint(x[j] <= x_ub[j])
-                prog.AddLinearConstraint(x[j] >= x_lb[j])
-            # cost function
-            J_i = -J[i,:] + 1e-15 # ???
-            prog.AddLinearCost(J_i.dot(x))
-            # solve LP
-            solver = GurobiSolver()
-            result = solver.Solve(prog)
-            J_sol[i] = J[i,:].dot(prog.GetSolution(x)) - rhs_x[i]
+        J_sol = [(-lin_or_quad_prog(np.array([]), -J[i,:].T, cons_lhs, cons_rhs)[1] - rhs_x[i]) for i in range(0,s)]
         if np.max(J_sol) < 0:
             convergence = True
         else:
@@ -231,9 +84,9 @@ def linSysEvo(A, B, N):
     free_evo = np.vstack([np.linalg.matrix_power(A,k) for k in range(1, N+1)])
     return [for_evo, free_evo]
 
-def simLinSys(x0, N, A, B=0, u_seq=0):
+def sim_lin_sys(x0, N, A, B=0, u_seq=0):
     """
-    simLinSys(x0, N, A, B=0, u_seq=0):
+    sim_lin_sys(x0, N, A, B=0, u_seq=0):
     simulates the evolution of the linear system
     INPUTS:
     x0    -> initial conditions
@@ -259,9 +112,9 @@ def simLinSys(x0, N, A, B=0, u_seq=0):
         x_traj = np.vstack((x_traj, x_next))
     return x_traj
 
-def ocpCostFun(A, B, Q, R, P, N):
+def ocp_cost_fun(A, B, Q, R, P, N):
     """
-    ocpCostFun(A, B, Q, R, P, N):
+    ocp_cost_fun(A, B, Q, R, P, N):
     returns the cost function blocks of the ocp QP
     INPUTS:
     A -> state transition matrix
@@ -287,9 +140,9 @@ def ocpCostFun(A, B, Q, R, P, N):
     F = F.T
     return [H, F]
 
-def ocpCons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
+def ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
     """
-    ocpCons(lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
+    ocp_cons(lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
     returns the constraint blocks of the ocp QP
     INPUTS:
     A                -> state transition matrix
@@ -323,254 +176,462 @@ def ocpCons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
     E = np.vstack((E_u, E_x, E_xN))
     return [G, W, E]
 
-def solveOcp(H, F, G, W, E, x0):
+def lin_or_quad_prog(H, f, A, b, x_bound=1e6):
     """
-    solveOcp(H, F, G, W, E, x0):
-    returns the optimal input sequence for the givien state x0
-    INPUTS:
-    H         -> Hessian of the ocp QP
-    F         -> cost function linear term (to be left-multiplied by x0^T!)
-    [G, W, E] -> QP constraints such that G*u_seq <= W + E*x0
-    x0        -> initial condition
+    Solves a quaratic or a linear program, depending on the input H
+    INPTS:
+    [H, f]  -> cost function min .5 x' H x + f' x
+    [A, b]  -> constraints A x <= b
+    x_bound -> bound on the solution
     OUTPUTS:
-    u_seq_opt -> optimal feed-forward control sequence
+    x_min    -> x such that the cost assumes its minimum value
+    cost_min -> minimum of the cost function
     """
+    # program dimensions
+    n = f.shape[0]
+    m = A.shape[0]
+    # build program
     prog = mp.MathematicalProgram()
-    n_u_seq = np.shape(G)[1]
-    u_seq = prog.NewContinuousVariables(n_u_seq, "u_seq")
-    prog.AddQuadraticCost(H, x0.T.dot(F).T, u_seq)
-    W_x0 = W + E.dot(x0)
-    for i in range(0, np.shape(W_x0)[0]):
-        prog.AddLinearConstraint(G[i,:].dot(u_seq) <= W_x0[i])
+    x = prog.NewContinuousVariables(n, "x")
+    for i in range(0, m):
+        prog.AddLinearConstraint((A[i,:] + 1e-15).dot(x) <= b[i])
+    if H.size:
+        prog.AddQuadraticCost(H, f, x)
+    else:
+        prog.AddLinearCost((f + 1e-15).T.dot(x))
+    # set bounds to the solution
+    for i in range(0, n):
+            prog.AddLinearConstraint(x[i] <= x_bound)
+            prog.AddLinearConstraint(x[i] >= -x_bound)
+    # solve
     solver = GurobiSolver()
     result = solver.Solve(prog)
-    print result
-    u_seq_opt = prog.GetSolution(u_seq).reshape(n_u_seq,1)
-    return u_seq_opt
+    x_min = prog.GetSolution(x).reshape(n,1)
+    # look for unbounded programs
+    toll = 1e-6
+    if not any(np.isnan(x_min)):
+        if any(np.absolute(x_min) >= x_bound - toll):
+            print("Unbounded LP in the domain ||x||_inf <= " + str(x_bound))
+    # retrieve solution
+    if H.size:
+        cost_min = .5*x_min.T.dot(H.dot(x_min)) + f.T.dot(x_min)
+    else:
+        cost_min = f.T.dot(x_min)
+    return [x_min, cost_min]
 
-############################################
-### plot functions #########################
-############################################
-
-def plotInputSeq(u_seq, u_min, u_max, t_s, N):
+def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
     """
-    plotInputSeq(u_seq, u_min, u_max, t_s, N):
-    plots the input sequences as functions of time
-    INPUTS:
-    u_seq -> input sequence \in R^(N*n_u)
-    [u_min, u_max]  -> lower and upper bound on the input
-    t_s   -> sampling time
-    N     -> time steps
-    """
-    n_u = u_seq.shape[0]/N
-    u_seq = np.reshape(u_seq,(n_u,N), 'F')
-    t = np.linspace(0,N*t_s,N+1)
-    for i in range(0, n_u):
-        plt.subplot(n_u, 1, i+1)
-        inPlot, = plt.step(t, np.hstack((u_seq[i,0],u_seq[i,:])),'b')
-        x_lbPlot, = plt.step(t, u_min[i,0]*np.ones(t.shape),'r')
-        plt.step(t, u_max[i,0]*np.ones(t.shape),'r')
-        plt.ylabel(r'$u_{' + str(i+1) + '}$')
-        plt.xlim((0.,N*t_s))
-        if i == 0:
-            plt.legend(
-                [inPlot, x_lbPlot],
-                ['Optimal control', 'Control bounds'],
-                loc=1)
-    plt.xlabel(r'$t$')
-
-def plotStateTraj(x_traj, x_min, x_max, t_s, N):
-    """
-    plotStateTraj(x_traj, x_min, x_max, t_s, N):
-    plots the state trajectories as functions of time
-    INPUTS:
-    x_traj          -> state trajectory \in R^((N+1)*n_x)
-    [x_min, x_max]  -> lower and upper bound on the state
-    t_s             -> sampling time
-    N               -> time steps
-    """
-    n_x = x_traj.shape[0]/(N+1)
-    x_traj = np.reshape(x_traj,(n_x,N+1), 'F')
-    t = np.linspace(0,N*t_s,N+1)
-    for i in range(0, n_x):
-        plt.subplot(n_x, 1, i+1)
-        stPlot, = plt.plot(t, x_traj[i,:],'b')
-        x_lbPlot, = plt.step(t, x_min[i,0]*np.ones(t.shape),'r')
-        plt.step(t, x_max[i,0]*np.ones(t.shape),'r')
-        plt.ylabel(r'$x_{' + str(i+1) + '}$')
-        plt.xlim((0.,N*t_s))
-        if i == 0:
-            plt.legend(
-                [stPlot, x_lbPlot],
-                ['Optimal trajectory', 'State bounds'],
-                loc=1)
-    plt.xlabel(r'$t$')
-
-def plotStateSpaceTraj(x_traj, N, col='b'):
-    """
-    plotStateSpaceTraj(x_traj, N, col='b'):
-    plots the state trajectories as functions of time (ONLY 2D)
-    INPUTS:
-    x_traj -> state trajectory \in R^((N+1)*n_x)
-    N      -> time steps
-    col    -> line specs
+    ocp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
+    Computes th blocks of a QP given the blocks of a OCP
+    INPTS:
+    A -> state transition matrix
+    B -> input to state matrix
+    Q -> state stage weight matrix
+    R -> input stage weight matrix
+    [u_min, u_max] -> bounds on the inputs
+    [x_min, x_max] -> bounds on the states
+    N_ocp -> ocp horizon
     OUTPUTS:
-    traj_plot -> figure handle
-    """
-    n_x = x_traj.shape[0]/(N+1)
-    x_traj = np.reshape(x_traj,(n_x,N+1), 'F')
-    plt.scatter(x_traj[0,0], x_traj[1,0], color=col, alpha=.5)
-    plt.scatter(x_traj[0,-1], x_traj[1,-1], color=col, marker='s', alpha=.5)
-    traj_plot = plt.plot(x_traj[0,:], x_traj[1,:], color=col)
-    plt.xlabel(r'$x_1$')
-    plt.ylabel(r'$x_2$')
-    return traj_plot
-
-def plotPoly(lhs, rhs, col):
-    """
-    plotPoly(lhs, rhs, col):
-    plots a polytope (ONLY 2D)
-    INPUTS:
-    [lhs, rhs] -> polytope definition {x | lhs*x <= rhs}
-    col    -> line specs
-    OUTPUTS:
-    poly_plot -> figure handle
-    """
-    poly = irispy.Polyhedron(lhs, rhs)
-    verts = np.vstack(poly.generatorPoints())
-    verts = np.vstack((verts,verts[-1,:]))
-    hull = spat.ConvexHull(verts)
-    for simp in hull.simplices:
-        poly_plot, = plt.plot(verts[simp, 0], verts[simp, 1], col)
-    return poly_plot
-
-def plotConsMoas(A, lhs_x, rhs_x, t):
-    """
-    plotConsMoas(A, lhs_x, rhs_x, t):
-    plots the set of constraints that define the MOAS until the first redundant polytope
-    INPUTS:
-    A          -> state transition matrix
-    [lhs_x, rhs_x] -> state constraint lhs_x x(k) <= rhs_x \forall k
-    t          -> number of steps after that the constraints are redundant
-    OUTPUTS:
-    [act_plot, red_plot] -> figure handles
-    """
-    # plot constraints from the first redundant one
-    for i in range(t+1,-1,-1):
-        lhs_x_i = lhs_x.dot(np.linalg.matrix_power(A,i))
-        if i == t+1:
-            red_plot = plotPoly(lhs_x_i, rhs_x, 'g-.')
-        else:
-            act_plot = plotPoly(lhs_x_i, rhs_x, 'y-.')
-    return [act_plot, red_plot]
-
-def plotMoas(lhs_moas, rhs_moas, t, A, N=0):
-    """
-    plotMoas(lhs_moas, rhs_moas, t, A, N):
-    plots the maximum output admissible set and a trajectory for each vertex of the moas
-    INPUTS:
-    [lhs_moas, rhs_moas] -> matrices such that moas := {x | lhs_moas*x <= rhs_moas}
-    t                  -> number of steps after that the constraints are redundant
-    A                  -> state transition matrix
-    N                  -> number of steps for the simulations
-    OUTPUTS:
-    [moas_plot, traj_plot] -> figure handles
+    H -> Hessian of the ocp QP
+    F -> cost function linear term (to be left-multiplied by x_0^T!)
+    [G, W, E] -> QP constraints such that G*u_seq <= W + E*x0
     """
     n_x = A.shape[0]
-    # plot MOAS polyhedron
-    moas_plot = plotPoly(lhs_moas, rhs_moas, 'r-')
-    # simulate a trajectory for each vertex
-    poly = irispy.Polyhedron(lhs_moas, rhs_moas)
-    verts = np.vstack(poly.generatorPoints())
-    for i in range(0, verts.shape[0]):
-        vert = verts[i,:].reshape(n_x,1)
-        x_traj = simLinSys(vert, N, A)
-        traj_plot, = plotStateSpaceTraj(x_traj,N)
-    return [moas_plot, traj_plot]
+    n_u = B.shape[1]
+    # constraints
+    lhs_u = np.vstack((np.eye(n_u), -np.eye(n_u)))
+    rhs_u = np.vstack((u_max, -u_min))
+    lhs_x = np.vstack((np.eye(n_x), -np.eye(n_x)))
+    rhs_x = np.vstack((x_max, -x_min))
+    # solve dare
+    [P, K] = dare(A, B, Q, R)
+    A_cl = A + B.dot(K)
+    # compute moas
+    lhs_x_cl = np.vstack((lhs_x,lhs_u.dot(K)))
+    rhs_x_cl = np.vstack((rhs_x,rhs_u))
+    [lhs_moas, rhs_moas, t] = moas(A_cl, lhs_x_cl, rhs_x_cl)
+    poly_moas = Poly(lhs_moas, rhs_moas)
+    # compute blocks
+    [G, W, E] = ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, poly_moas.lhs, poly_moas.rhs, N_ocp)
+    [H, F] = ocp_cost_fun(A, B, Q, R, P, N_ocp)
+    # remove always-redundant constraints (coincident constraints are extremely problematic!)
+    poly_cons = Poly(np.hstack((G, -E)), W)
+    G = poly_cons.lhs[:,:n_u*N_ocp]
+    E = - poly_cons.lhs[:,n_u*N_ocp:]
+    W = poly_cons.rhs
+    return [H, F, G, W, E]
 
-def plotNomTraj(x_traj_qp, x_traj_lqr, lhs_moas, rhs_moas):
+class Poly:
     """
-    plotNomTraj(x_traj_qp, lhs_moas, rhs_moas):
-    plots the open-loop optimal trajectories for each sampling time (ONLY 2D)
-    INPUTS:
-    x_traj_qp            -> matrix with optimal trajectories
-    x_traj_lqr           -> matrix with optimal states
-    [lhs_moas, rhs_moas] -> matrices such that moas := {x | lhs_moas*x <= rhs_moas}
+    Defines a polyhedron as {x | lhs x <= rhs}
+    ATTRIBUTES:
+        [lhs, rhs]         -> left- and right-hand-side of the (possibly redundant) representation of the polyhedron
+        x_bound            -> bounding box dimension
+        [lhs_min, rhs_min] -> left- and right-hand-side of the MINIMAL representation of the polyhedron
+        verts              -> vertices of the polyhedron
     """
-    n_traj = np.shape(x_traj_qp)[1]
-    N_ocp = (np.shape(x_traj_qp)[0]-1)/2
-    col_map = plt.get_cmap('jet')
-    col_norm  = mpl.colors.Normalize(vmin=0, vmax=n_traj)
-    scalar_map = mpl.cm.ScalarMappable(norm=col_norm, cmap=col_map)
-    poly_plot = plotPoly(lhs_moas, rhs_moas, 'r-')
-    leg_plot = [poly_plot]
-    leg_lab = ['MOAS']
-    for i in range(0,n_traj):
-        col = scalar_map.to_rgba(i)
-        leg_plot += plotStateSpaceTraj(x_traj_qp[:,i], N_ocp, col)
-        leg_lab += [r'$\mathbf{x}^*(x_{' + str(i) + '})$']
-    for i in range(0,np.shape(x_traj_lqr)[1]):
-        if i == 0:
-            leg_plot += [plt.scatter(x_traj_lqr[0,i], x_traj_lqr[1,i], color='b', marker='d', alpha=.5)]
-            leg_lab += [r'LQR']
+
+    def __init__(self, lhs, rhs, x_bound=1e6):
+
+        ### ensure that the polyhedron is not empty
+        x_feasible = lin_or_quad_prog(np.array([]), np.zeros(lhs[0,:].shape), lhs, rhs, x_bound)[0]
+        self.x_bound = x_bound
+        self.empty = any(np.isnan(x_feasible))
+
+        ### minimal representation of the polyhedron
+        n = lhs.shape[1]
+        m = lhs.shape[0]
+        if self.empty:
+            print('Empty polyhedron!')
         else:
-            plt.scatter(x_traj_lqr[0,i], x_traj_lqr[1,i], color='b', marker='d', alpha=.5)
-    plt.legend(leg_plot, leg_lab, loc=1)
+            self.coinc_facets = poly_coinc_facets(lhs,rhs)
+            [self.lhs, self.rhs, self.min_facets_indices] = poly_min_facets(lhs, rhs, x_bound)
+     
+        ### vertices of the polyhedron
+        if not self.empty:
+            lhs_bound = np.vstack((self.lhs, np.eye(n), -np.eye(n)))
+            rhs_bound = np.vstack((self.rhs, x_bound*np.ones((2*n,1))))
+            poly = iri.Polyhedron(lhs_bound, rhs_bound)
+            verts = np.vstack(poly.generatorPoints())
+            toll = 1e-6
+            if any(np.absolute(verts).flatten() >= x_bound - toll):
+                print("Unbounded polyhedron in the domain ||x||_inf <= " + str(x_bound))
+            self.verts = np.vstack((verts,verts[-1,:]))
+
+    def plot(self, line_style='b'):
+        """
+        Plots the "D" polyhedron in the (x_1,x_2) plane
+        INPUTS:
+        line_style -> specs of the plot color and line style
+        OUTPUTS:
+        poly_plot -> figure handle
+        """
+        if self.empty:
+            raise ValueError('Unable to plot empty polyhedrons!')
+        n = self.lhs.shape[1]
+        if n > 2:
+            raise ValueError('Unable to plot polyhedrons in more than 2 dimensions!')
+        hull = spat.ConvexHull(self.verts)
+        for simp in hull.simplices:
+            self.poly_plot, = plt.plot(self.verts[simp, 0], self.verts[simp, 1], line_style)
+        toll = 1e-6
+        vert_unb = np.array([]).reshape(0,2)
+        for i in range(self.verts.shape[0]):
+            if any(np.absolute(self.verts[i,:]) >= self.x_bound - toll):
+                vert_unb = np.vstack((vert_unb, self.verts[i,:]))
+        if any(np.absolute(self.verts.flatten()) >= self.x_bound - toll):
+            plt.scatter(vert_unb[:,0], vert_unb[:,1], color='r', alpha=.5, label='Unbounded vertices')
+            plt.legend(loc=1)
+        # ### plot center
+        # center = np.mean(self.verts[:-1,:], axis=0)
+        # plt.scatter(center[0], center[1], color='g')
+        # ###
+        plt.xlabel(r'$x_1$')
+        plt.ylabel(r'$x_2$')
+        return self.poly_plot
+
+def poly_facet_center(poly, lhs_facet, rhs_facet):
+    """
+    derives the center of a facet which belongs to a polyhedron
+    INPUTS:
+    poly -> polyhedron
+    [lhs_facet, rhs_facet] -> equation of the facet (lhs_facet * x = rhs_facet)
+    OUTPUTS:
+    center -> coordinates of the center of the polyhedron facet
+    """
+    facet_edeges = np.array([]).reshape(0,len(lhs_facet))
+    toll = 1e-9
+    for vert in poly.verts[:-1,:]:
+        if np.absolute(lhs_facet.dot(vert.T)-rhs_facet) < toll:
+            facet_edeges = np.vstack((facet_edeges, vert))
+    if facet_edeges.shape[0] < 2:
+        raise ValueError('The given equation is not a facet of the polyhedron!')
+    center = np.mean(facet_edeges, axis=0)
+    return center.reshape(len(center),1)
+
+def poly_coinc_facets(lhs,rhs):
+    """
+    poly_coinc_facets(lhs,rhs):
+    returns the coincident factes of a polyhedron
+    INPUTS:
+    [lhs, rhs] -> left- and right-hand-side of the representation of the polyhedron
+    OUTPUTS:
+    coinc_facets -> list of lists of coincident facets
+    """
+    m = lhs.shape[0]
+    # concatenate left- and right-hand sides
+    lrhs = np.hstack((lhs,rhs))
+    # normalize each row
+    for i in range(0, m):
+        lrhs[i,:] = lrhs[i,:]/(np.linalg.norm(lrhs[i,:]))
+    # list of lists of coincident facets
+    coinc_facets = []
+    # look for coincident facets
+    for i in range(0, m):
+        # if the ith facet is not already be found to be coincident to someother facets
+        if i not in [j for sublist in coinc_facets for j in sublist]:
+            coinc_facets_i = [i]
+            # check coincidence with all the others
+            for j in range(i+1, m):
+                if all(np.isclose(lrhs[i,:], lrhs[j,:])):
+                    coinc_facets_i.append(j)
+            # if coincidence append to coinc_facets
+            coinc_facets.append(coinc_facets_i)
+    return coinc_facets
+
+def poly_min_facets(lhs, rhs, x_bound=1e6):
+    """
+    poly_min_facets(lhs, rhs, x_bound=1e6):
+    returns the minimum set of factes to represent a polyhedron (in case of coincident facets, only one is mantained)
+    INPUTS:
+    [lhs, rhs] -> left- and right-hand-side of the representation of the polyhedron
+    x_bound    -> bound for unbounded polyhedron
+    OUTPUTS:
+    [lhs_min, rhs_min] -> minimal representation of the polyhedron
+    min_facets_indices -> indices of the non-redundant facets in the original representation
+    """
+    n = lhs.shape[1]
+    m = lhs.shape[0]
+    # list of non-redundant facets
+    min_facets_indices = range(0, m)
+    for i in range(0, m):
+        # remove redundant constraints
+        lhs_i = lhs[min_facets_indices,:]
+        # relax the ith constraint
+        rhs_relax = np.zeros(np.shape(rhs))
+        rhs_relax[i] += 1
+        rhs_i = (rhs + rhs_relax)[min_facets_indices];
+        # check redundancy
+        f_i = -lhs[i,:].T
+        cost_i = lin_or_quad_prog(np.array([]), f_i, lhs_i, rhs_i, x_bound)[1]
+        cost_i = - cost_i - rhs[i]
+        # remove redundant facets from the list
+        toll = 1e-6
+        if np.absolute(cost_i) < toll:
+            print "Coincident hyperplanes with tollerance " + str(cost_i[0])
+        if cost_i < toll:
+            min_facets_indices.remove(i)
+    min_facets_indices = min_facets_indices
+    lhs_min = lhs[min_facets_indices,:]
+    rhs_min = rhs[min_facets_indices]
+    return [lhs_min, rhs_min, min_facets_indices]
 
 class CriticalRegion:
+    # this is structured following:
+    # Tondel, Johansen, Bemporad - An algorithm for multi-parametric quadratic programming and explicit MPC solutions
 
     def __init__(self, act_set, H, G, W, S):
 
-        ### active and inactive set
+        ### active set
         self.act_set = act_set
         self.inact_set = list(set(range(0, G.shape[0])) - set(act_set))
+        n_inact = len(self.inact_set)
 
-        ### boundaries
-        #print np.linalg.det(H)
+        ### optimal solution as a function of x
         H_inv = np.linalg.inv(H)
-        # active constraints
-        G_a = G[self.act_set,:]
-        W_a = W[self.act_set,:]
-        S_a = S[self.act_set,:]
-        # polyhedron facets divided by type
-        #print np.linalg.det(G_a.dot(H_inv.dot(G_a.T)))
-        H_a = np.linalg.inv(G_a.dot(H_inv.dot(G_a.T)))
-        lhs_t1 = G.dot(H_inv.dot(G_a.T.dot(H_a.dot(S_a)))) - S
-        rhs_t1 = - G.dot(H_inv.dot(G_a.T.dot(H_a.dot(W_a)))) + W
-        lhs_t2 = H_a.dot(S_a)
-        rhs_t2 = - H_a.dot(W_a)
-        #######
-        #######
-        #######
-        ### remove zeros
-        lhs_t1[np.absolute(lhs_t1) < 1e-9] = 0
-        lhs_t2[np.absolute(lhs_t2) < 1e-9] = 0
-        rhs_t1[np.absolute(rhs_t1) < 1e-9] = 0
-        rhs_t2[np.absolute(rhs_t2) < 1e-9] = 0
-        # print(np.vstack((lhs_t1, lhs_t2)))
-        # print(np.vstack((rhs_t1, rhs_t2)))
-        ###
-        #######
-        #######
-        #######
-        # remove redundant facets
-        [lhs_t1_min, lhs_t2_min, rhs_t1_min, rhs_t2_min] = minPolyFacetsWithType(lhs_t1, lhs_t2, rhs_t1, rhs_t2)
-        # boundaries
-        self.lhs = np.vstack((lhs_t1_min, lhs_t2_min))
-        self.rhs = np.vstack((rhs_t1_min, rhs_t2_min))
+        # active and inactive constraints
+        [G_A, W_A, S_A] = [G[self.act_set,:], W[self.act_set,:], S[self.act_set,:]]
+        [G_I, W_I, S_I] = [G[self.inact_set,:], W[self.inact_set,:], S[self.inact_set,:]]
+        # explicit solution for dual variables (lam_A_opt (x) = lam_A_trans + lam_A_lin * x)
+        H_a = np.linalg.inv(G_A.dot(H_inv.dot(G_A.T))) # (always invertible since licq holds)
+        self.lam_A_trans = - H_a.dot(W_A)
+        self.lam_A_lin = - H_a.dot(S_A)
+        # explicit solution for primal variables (z_opt (x) = z_A_trans + z_lin * x)
+        self.z_trans = - H_inv.dot(G_A.T.dot(self.lam_A_trans))
+        self.z_lin = - H_inv.dot(G_A.T.dot(self.lam_A_lin))
+
+        ### state-space polyhedron 
+        # equation (12) revised: only inactive indices
+        lhs_t1 = G_I.dot(self.z_lin) - S_I
+        rhs_t1 = - G_I.dot(self.z_trans) + W_I
+        # equation (13)
+        lhs_t2 = H_a.dot(S_A)
+        rhs_t2 = - H_a.dot(W_A)
+        # construct polyhedron
+        self.poly_t12 = Poly(np.vstack((lhs_t1, lhs_t2)), np.vstack((rhs_t1, rhs_t2)))
+        # if the polyhedron is empty return 
+        if self.poly_t12.empty:
+            return
+
+        ### weakly active constraints enumerated as in G*z <= W + S*x ("original enumeration")
+        toll = 1e-6
+        self.weakly_act = False
+        weakly_act_set = []
+        # weakly active constraints are included in the active set
+        for i in range(0, lhs_t2.shape[0]):
+            # to be weakly active in the whole region they can only be in the form 0*x <= 0
+            if np.linalg.norm(lhs_t2[i,:]) + np.absolute(rhs_t2[i,:]) < toll:
+                print('Weakly active constraint detected!')
+                # act_set[i] maps to index i into the "original enumeration"
+                weakly_act_set.append(self.act_set[i])
+                self.weakly_act = True
 
         ### active sets of the neighboring critical regions
-        neig_act_set = []
-        act_set_copy = self.act_set
-        inact_set_copy = self.inact_set
-        for i in range(0, lhs_t1_min.shape[0]):
-            ind = findPolyIndex(lhs_t1_min[i,:], rhs_t1_min[i,0], lhs_t1, rhs_t1)
-            cons_num = inact_set_copy[ind]
-            neig_i_act_set = act_set_copy + [cons_num]
-            neig_act_set.append(neig_i_act_set)
-        for i in range(0, lhs_t2_min.shape[0]):
-            ind = findPolyIndex(lhs_t2_min[i,:], rhs_t2_min[i,0], lhs_t2, rhs_t2)
-            cons_num = act_set_copy[ind]
-            neig_i_act_set = act_set_copy.remove(cons_num)
-            neig_act_set.append([neig_i_act_set])
-        self.neig_act_set = neig_act_set
+        # first detect coincident facets, express them as indices in the "original enumeration" and store info about their type (1 or 2)
+        coinc_facets_list = []
+        for facets in self.poly_t12.coinc_facets:
+            ind_list = []
+            type_list = []
+            for facet in facets:
+                if facet < n_inact:
+                    ind_list += [self.inact_set[facet]]
+                    type_list += ['t1']
+                else:
+                    ind_list += [self.act_set[facet - n_inact]]
+                    type_list += ['t2']
+            coinc_facets_list.append([ind_list, type_list])
+        # apply theorem 2 and corollary 1
+        neig_act_sets = []
+        # in the following I store also info regarding the center and the gradient of each facet (these are needed to cope with licq fails!)
+        # for all the facets of this critical region
+        for i in range(0,len(self.poly_t12.min_facets_indices)):
+            # store vector normal to the shared facet
+            norm_vec = self.poly_t12.lhs[i,:]
+            norm_vec = norm_vec.reshape(len(norm_vec),1)
+            # store center of the shared facet
+            center = poly_facet_center(self.poly_t12, self.poly_t12.lhs[i,:], self.poly_t12.rhs[i])
+            # initialize the list containing the difference of active set between parent CR and child CR
+            pot_act_set_diff = []
+            # start with the active set of the parent CR
+            pot_act_set = self.act_set[:]
+            # path from the index "i" to the index in the "original enumeration" (called "ind")
+            ind = self.poly_t12.min_facets_indices[i]
+            if ind < n_inact:
+                ind = self.inact_set[ind]
+            else:
+                ind = self.act_set[ind - n_inact]
+            # generate potential active sets for each facet
+            for coinc_facets in coinc_facets_list:
+                if ind in coinc_facets[0]:
+                    # a new constraint becomes active (or inactive) for each coincident facet
+                    for j in range(0,len(coinc_facets[0])):
+                        if coinc_facets[1][j] == 't1':
+                            pot_act_set.append(coinc_facets[0][j])
+                            pot_act_set_diff.append(coinc_facets[0][j])
+                        else:
+                            pot_act_set.remove(coinc_facets[0][j])
+                            pot_act_set_diff.append(-coinc_facets[0][j])
+            pot_act_set.sort()
+            # store every info about each set of coincident facets of the parent CR
+            neig_act_sets.append([pot_act_set, pot_act_set_diff, center, norm_vec])
+
+            ### theorem 5 (weakly active procude further potential active sets)
+            if self.weakly_act:
+                # additional potential active sets
+                neig_act_sets_weak = []
+                # for each one of the already computed potential active sets
+                for i in range(0,len(neig_act_sets)):
+                    neig_act_sets_weak_i = []
+                    # for every possible combination of the weakly active constraints
+                    for n_weakly_act in range(1,len(weakly_act_set)+1):
+                        for comb_weakly_act in it.combinations(weakly_act_set, n_weakly_act):
+                            # remove each combination from each potential active set to create a new potential active set
+                            if set(neig_act_sets[i][0]).issuperset(comb_weakly_act):
+                                # new potential active set
+                                neig_act_sets_weak_i.append([j for j in neig_act_sets[i][0] if j not in list(comb_weakly_act)])
+                                # update differences wrt the active set of the parent CR
+                                neig_act_sets_weak_i.append(neig_act_sets[i][1] + [-j for j in list(comb_weakly_act)])
+                                # copy information of the parent's facet
+                                neig_act_sets_weak_i.append(neig_act_sets[i][2:3])
+                    # update the list of potential active sets generated because of wekly active constraints
+                    neig_act_sets_weak.append(neig_act_sets_weak_i)
+                # add all the new potential sets to the list
+                neig_act_sets += neig_act_sets_weak
+        self.neig_act_sets = neig_act_sets
+        return
+
+    def z_opt(self, x):
+        """
+        Return the explicit solution of the mpQP as a function of the parameter
+        INPUTS:
+        x -> value of the parameter
+        OUTPUTS:
+        z_opt -> solution of the QP
+        """
+        z_opt = self.z_trans + self.z_lin.dot(x)
+        return z_opt
+
+    def lam_opt(self, x):
+        """
+        Return the explicit value of the multipliers of the mpQP as a function of the parameter
+        INPUTS:
+        x -> value of the parameter
+        OUTPUTS:
+        lam_opt -> optimal multipliers
+        """
+        lam_A_opt = self.lam_A_trans + self.lam_A_lin.dot(x)
+        lam_opt = np.zeros(G.shape[0],1)
+        for i in len(self.act_set):
+            lam_opt[self.act_set[i],0] = lam_A_opt[i]
+        return lam_opt
+
+def act_set_if_degeneracy(parent, ind, H, G, W, S):
+    """
+    returns the active set in case that licq does not hold (theorem 4 and some more...)
+    INPUTS:
+    parent       -> citical region that has generated this degenerate active set hypothesis
+    ind          -> index of this active set hypothesis in the parent's list of neighboring active sets
+    [H, G, W, S] -> cost and constraint matrices of the mp-QP
+    OUTPUTS:
+    act_set_child -> real active set of the child critical region (= False if the region is unfeasible)
+    """
+    # get the info related to the creation of the degenerate active set
+    [pot_act_set, pot_act_set_diff, center, norm_vec] = parent.neig_act_sets[ind]
+    toll = 1e-6
+    # if more than one constraint has been activated (I think this does not apply)
+    # if len(pot_act_set_diff) != 1:
+    if True:
+        print 'Cannot solve degeneracy with multiple active set changes! The solution of a QP is required...'
+        dist = 1e-6
+        # just sole the QP inside the new critical region to derive the active set
+        x = center + dist*norm_vec
+        z = lin_or_quad_prog(H, np.zeros((H.shape[0],1)), G, W+S.dot(x))[0]
+        cons_val = G.dot(z) - W - S.dot(x)
+        # new active set for the child
+        act_set_child = [i for i in range(0,cons_val.shape[0]) if cons_val[i] > -toll]
+        # convert [] to False to avoid confusion with the empty active set...
+        if not act_set_child:
+            act_set_child = False
+    else:
+        # check that this never happens
+        if pot_act_set_diff[0] < 0:
+            raise ValueError('LICQ must hold when a constraint is removed!')
+        # compute optimal solution in the center of the shared facet
+        z_center = parent.z_opt(center)
+        # solve lp from theorem 4
+        G_A = G[pot_act_set,:]
+        n_lam = G_A.shape[0]
+        cost = np.zeros(n_lam)
+        cost[pot_act_set.index(pot_act_set_diff[0])] = -1.
+        cons_lhs = np.vstack((G_A.T, -G_A.T, -np.eye(n_lam)))
+        cons_rhs = np.vstack((-H.dot(z_center), H.dot(z_center), np.zeros((n_lam,1))))
+        lam_bound = 1e6
+        lam_sol = lin_or_quad_prog(np.array([]), cost, cons_lhs, cons_rhs, lam_bound)[0]
+        # if the solution in unbounded the region is not feasible
+        if np.max(lam_sol) > lam_bound - toll:
+            act_set_child = False
+        # if the solution in bounded look at the indices of the solution
+        else:
+            act_set_child = []
+            for i in range(0,n_lam):
+                if lam_sol[i,0] > toll:
+                    act_set_child += [pot_act_set[i]]
+    return act_set_child
+
+def licq_check(G, act_set):
+    """
+    checks if licq holds
+    INPUTS:
+    G -> gradient of the constraints
+    act_set -> active set
+    OUTPUTS:
+    licq -> flag, = True if licq holds, = False otherwise
+    """
+    G_A = G[act_set,:]
+    licq = True
+    max_cond = 1e9
+    cond = np.linalg.cond(G_A.dot(G_A.T))
+    if cond > max_cond:
+        licq = False
+        print 'LICQ does not hold: condition number of G*G^T = ' + str(cond)
+    return licq
