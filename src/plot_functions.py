@@ -82,7 +82,10 @@ def plot_cons_moas(A, lhs_x, rhs_x, t):
     # plot constraints from the first redundant one
     for i in range(t+1,-1,-1):
         lhs_x_i = lhs_x.dot(np.linalg.matrix_power(A,i))
-        poly_x_i = Poly(lhs_x_i, rhs_x)
+        print 'start'
+        print rhs_x
+        print 'stop'
+        poly_x_i = Poly(lhs_x_i, rhs_x*1.) # ? if I don't do this, the modification to this value that I make inside the class changes also the value otuside the class!!!!
         if i == t+1:
             redund_plot = poly_x_i.plot('g-.')
         else:

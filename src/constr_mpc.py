@@ -1,4 +1,4 @@
-from params_IP import *
+from params_DI import *
 from mpc_functions import *
 from plot_functions import *
 
@@ -35,7 +35,6 @@ for k in range(0, N_mpc):
         x_traj_lqr = np.hstack((x_traj_lqr, xk))
     else:
         u_seq = lin_or_quad_prog(H, (xk.T.dot(F)).T, G, W+E.dot(xk))[0]
-        #(xk.T.dot(F)).Tu_seq = solveOcp(H, F, G, W, E, xk)
         x_traj = sim_lin_sys(xk, N_ocp, A, B, u_seq)
         x_traj_qp = np.hstack((x_traj_qp, x_traj))
         u0 = u_seq[0:n_u].reshape(n_u,1)

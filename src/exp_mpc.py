@@ -2,7 +2,7 @@ from mpc_functions import *
 from params_IP import *
 
 # qp blocks
-[H, F, G, W, E] = qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp)
+[H, F, G, W, E] = qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp, ter_cons)
 
 # change variable for exeplicit MPC (z := u_seq + H^-1 F^T x0)
 H_inv = np.linalg.inv(H)
@@ -12,7 +12,7 @@ S = E + G.dot(H_inv.dot(F.T))
 act_set = []
 cr0 = CriticalRegion(act_set, H, G, W, S)
 print 'Computing critical region for the active set ' + str(act_set)
-L_cand = [cr0] 
+L_cand = [cr0]
 L_opt = []
 act_set_cand =[cr0.act_set]
 
@@ -26,8 +26,8 @@ while L_cand:
         # add the CR to the list of critical regions
         L_opt.append(cr)
         # compute all the potential neighboring CRs (avoid copies)
-        for i in range(0,len(cr.neig_act_sets)):
-            act_set = cr.neig_act_sets[i][0]
+        for i in range(0,len(cr.neig_act_set_list)):
+            act_set = cr.neig_act_set_list[i][0]
             if act_set not in act_set_cand:
                 act_set_cand.append(act_set)
                 licq = licq_check(G, act_set)
@@ -43,12 +43,9 @@ while L_cand:
                     else:
                         print "Unfeasible region detected!"
 
-### test the explicit solution
+# test the explicit solution
 
-# test point
-x_test = np.array([[-1.09],[1.]])
-
-# find the CR to which it belongs
+# find the CR to which the test point belongs
 for cr in L_opt:
 	check = cr.poly_t12.lhs.dot(x_test) - cr.poly_t12.rhs
 	if np.max(check) <= 0:
@@ -65,7 +62,7 @@ u_impl = lin_or_quad_prog(H, (x_test.T.dot(F)).T, G, W+E.dot(x_test))[0]
 print "Optimal solution from implicit MPC: " + str(list(u_impl.flatten()))
 
 # plot the partition
+plt.scatter(x_test[0], x_test[1], color='g')
 for cr in L_opt:
     cr.poly_t12.plot()
-plt.scatter(x_test[0], x_test[1], color='g')
 plt.show()

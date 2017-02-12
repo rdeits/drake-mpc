@@ -219,7 +219,7 @@ def lin_or_quad_prog(H, f, A, b, x_bound=1e6):
         cost_min = f.T.dot(x_min)
     return [x_min, cost_min]
 
-def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
+def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp, ter_cons):
     """
     ocp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
     Computes th blocks of a QP given the blocks of a OCP
@@ -231,6 +231,7 @@ def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
     [u_min, u_max] -> bounds on the inputs
     [x_min, x_max] -> bounds on the states
     N_ocp -> ocp horizon
+    ter_cons -> terminal constraints imposed to the OCP (available options: 'moas', 'none')
     OUTPUTS:
     H -> Hessian of the ocp QP
     F -> cost function linear term (to be left-multiplied by x_0^T!)
@@ -238,21 +239,33 @@ def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp):
     """
     n_x = A.shape[0]
     n_u = B.shape[1]
-    # constraints
+    # stage constraints
     lhs_u = np.vstack((np.eye(n_u), -np.eye(n_u)))
     rhs_u = np.vstack((u_max, -u_min))
     lhs_x = np.vstack((np.eye(n_x), -np.eye(n_x)))
     rhs_x = np.vstack((x_max, -x_min))
-    # solve dare
-    [P, K] = dare(A, B, Q, R)
-    A_cl = A + B.dot(K)
-    # compute moas
-    lhs_x_cl = np.vstack((lhs_x,lhs_u.dot(K)))
-    rhs_x_cl = np.vstack((rhs_x,rhs_u))
-    [lhs_moas, rhs_moas, t] = moas(A_cl, lhs_x_cl, rhs_x_cl)
-    poly_moas = Poly(lhs_moas, rhs_moas)
+    # terminal constraints
+    if ter_cons == 'moas':
+        # solve dare
+        [P, K] = dare(A, B, Q, R)
+        A_cl = A + B.dot(K)
+        # compute moas
+        lhs_x_cl = np.vstack((lhs_x,lhs_u.dot(K)))
+        rhs_x_cl = np.vstack((rhs_x,rhs_u))
+        [lhs_moas, rhs_moas, t] = moas(A_cl, lhs_x_cl, rhs_x_cl)
+        poly_moas = Poly(lhs_moas, rhs_moas)
+        lhs_xN = poly_moas.lhs
+        rhs_xN = poly_moas.rhs
+    # elif ter_cons == 'origin':
+    #     P = np.zeros((n_x,n_x))
+    #     lhs_xN = np.vstack((np.eye(n_x), - np.eye(n_x)))
+    #     rhs_xN = np.zeros((2*n_x,1))
+    elif ter_cons == 'none':
+        P = dare(A, B, Q, R)[0]
+        lhs_xN = np.array([]).reshape(0,n_x)
+        rhs_xN = np.array([]).reshape(0,1)
     # compute blocks
-    [G, W, E] = ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, poly_moas.lhs, poly_moas.rhs, N_ocp)
+    [G, W, E] = ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N_ocp)
     [H, F] = ocp_cost_fun(A, B, Q, R, P, N_ocp)
     # remove always-redundant constraints (coincident constraints are extremely problematic!)
     poly_cons = Poly(np.hstack((G, -E)), W)
@@ -272,6 +285,12 @@ class Poly:
     """
 
     def __init__(self, lhs, rhs, x_bound=1e6):
+        ### scale polyhedron equations to avoid numeric errors
+        for i in range(0,lhs.shape[0]):
+            norm_fact = np.linalg.norm(np.hstack((lhs[i,:],rhs[i])))
+            if norm_fact > 1e-3:
+                lhs[i,:] = lhs[i,:]/norm_fact
+                rhs[i] = rhs[i]/norm_fact
 
         ### ensure that the polyhedron is not empty
         x_feasible = lin_or_quad_prog(np.array([]), np.zeros(lhs[0,:].shape), lhs, rhs, x_bound)[0]
@@ -287,16 +306,15 @@ class Poly:
             self.coinc_facets = poly_coinc_facets(lhs,rhs)
             [self.lhs, self.rhs, self.min_facets_indices] = poly_min_facets(lhs, rhs, x_bound)
      
-        ### vertices of the polyhedron
-        if not self.empty:
+            ### vertices of the polyhedron
+            # bounding box
             lhs_bound = np.vstack((self.lhs, np.eye(n), -np.eye(n)))
             rhs_bound = np.vstack((self.rhs, x_bound*np.ones((2*n,1))))
             poly = iri.Polyhedron(lhs_bound, rhs_bound)
-            verts = np.vstack(poly.generatorPoints())
+            self.verts = np.vstack(poly.generatorPoints())
             toll = 1e-6
-            if any(np.absolute(verts).flatten() >= x_bound - toll):
+            if any(np.absolute(self.verts).flatten() >= x_bound - toll):
                 print("Unbounded polyhedron in the domain ||x||_inf <= " + str(x_bound))
-            self.verts = np.vstack((verts,verts[-1,:]))
 
     def plot(self, line_style='b'):
         """
@@ -307,7 +325,7 @@ class Poly:
         poly_plot -> figure handle
         """
         if self.empty:
-            raise ValueError('Unable to plot empty polyhedrons!')
+            raise ValueError('Empty polyhedron!')
         n = self.lhs.shape[1]
         if n > 2:
             raise ValueError('Unable to plot polyhedrons in more than 2 dimensions!')
@@ -341,10 +359,24 @@ def poly_facet_center(poly, lhs_facet, rhs_facet):
     """
     facet_edeges = np.array([]).reshape(0,len(lhs_facet))
     toll = 1e-9
-    for vert in poly.verts[:-1,:]:
+    for vert in poly.verts:
         if np.absolute(lhs_facet.dot(vert.T)-rhs_facet) < toll:
             facet_edeges = np.vstack((facet_edeges, vert))
     if facet_edeges.shape[0] < 2:
+        print '!!! This error can be caused by numeric issues !!!'
+        print 'At least two of the following values'
+        for vert in poly.verts:
+            print lhs_facet.dot(vert.T)-rhs_facet
+        print 'should be zero with a tollerance of ' + str(toll) + '.'
+        print 'These are generated by the expression:'
+        print str(lhs_facet)
+        print 'times each one of the following'
+        print poly.verts
+        print 'minus'
+        print str(rhs_facet) + '.'
+        print 'This is the plot of the region ...'
+        poly.plot()
+        plt.show()
         raise ValueError('The given equation is not a facet of the polyhedron!')
     center = np.mean(facet_edeges, axis=0)
     return center.reshape(len(center),1)
@@ -441,7 +473,7 @@ class CriticalRegion:
         self.z_lin = - H_inv.dot(G_A.T.dot(self.lam_A_lin))
 
         ### state-space polyhedron 
-        # equation (12) revised: only inactive indices
+        # equation (12) (revised, only inactive indices...)
         lhs_t1 = G_I.dot(self.z_lin) - S_I
         rhs_t1 = - G_I.dot(self.z_trans) + W_I
         # equation (13)
@@ -453,92 +485,19 @@ class CriticalRegion:
         if self.poly_t12.empty:
             return
 
-        ### weakly active constraints enumerated as in G*z <= W + S*x ("original enumeration")
-        toll = 1e-6
-        self.weakly_act = False
-        weakly_act_set = []
-        # weakly active constraints are included in the active set
-        for i in range(0, lhs_t2.shape[0]):
-            # to be weakly active in the whole region they can only be in the form 0*x <= 0
-            if np.linalg.norm(lhs_t2[i,:]) + np.absolute(rhs_t2[i,:]) < toll:
-                print('Weakly active constraint detected!')
-                # act_set[i] maps to index i into the "original enumeration"
-                weakly_act_set.append(self.act_set[i])
-                self.weakly_act = True
-
-        ### active sets of the neighboring critical regions
-        # first detect coincident facets, express them as indices in the "original enumeration" and store info about their type (1 or 2)
-        coinc_facets_list = []
-        for facets in self.poly_t12.coinc_facets:
-            ind_list = []
-            type_list = []
-            for facet in facets:
-                if facet < n_inact:
-                    ind_list += [self.inact_set[facet]]
-                    type_list += ['t1']
-                else:
-                    ind_list += [self.act_set[facet - n_inact]]
-                    type_list += ['t2']
-            coinc_facets_list.append([ind_list, type_list])
-        # apply theorem 2 and corollary 1
-        neig_act_sets = []
-        # in the following I store also info regarding the center and the gradient of each facet (these are needed to cope with licq fails!)
-        # for all the facets of this critical region
-        for i in range(0,len(self.poly_t12.min_facets_indices)):
-            # store vector normal to the shared facet
-            norm_vec = self.poly_t12.lhs[i,:]
-            norm_vec = norm_vec.reshape(len(norm_vec),1)
-            # store center of the shared facet
-            center = poly_facet_center(self.poly_t12, self.poly_t12.lhs[i,:], self.poly_t12.rhs[i])
-            # initialize the list containing the difference of active set between parent CR and child CR
-            pot_act_set_diff = []
-            # start with the active set of the parent CR
-            pot_act_set = self.act_set[:]
-            # path from the index "i" to the index in the "original enumeration" (called "ind")
-            ind = self.poly_t12.min_facets_indices[i]
-            if ind < n_inact:
-                ind = self.inact_set[ind]
-            else:
-                ind = self.act_set[ind - n_inact]
-            # generate potential active sets for each facet
-            for coinc_facets in coinc_facets_list:
-                if ind in coinc_facets[0]:
-                    # a new constraint becomes active (or inactive) for each coincident facet
-                    for j in range(0,len(coinc_facets[0])):
-                        if coinc_facets[1][j] == 't1':
-                            pot_act_set.append(coinc_facets[0][j])
-                            pot_act_set_diff.append(coinc_facets[0][j])
-                        else:
-                            pot_act_set.remove(coinc_facets[0][j])
-                            pot_act_set_diff.append(-coinc_facets[0][j])
-            pot_act_set.sort()
-            # store every info about each set of coincident facets of the parent CR
-            neig_act_sets.append([pot_act_set, pot_act_set_diff, center, norm_vec])
-
-            ### theorem 5 (weakly active procude further potential active sets)
-            if self.weakly_act:
-                # additional potential active sets
-                neig_act_sets_weak = []
-                # for each one of the already computed potential active sets
-                for i in range(0,len(neig_act_sets)):
-                    neig_act_sets_weak_i = []
-                    # for every possible combination of the weakly active constraints
-                    for n_weakly_act in range(1,len(weakly_act_set)+1):
-                        for comb_weakly_act in it.combinations(weakly_act_set, n_weakly_act):
-                            # remove each combination from each potential active set to create a new potential active set
-                            if set(neig_act_sets[i][0]).issuperset(comb_weakly_act):
-                                # new potential active set
-                                neig_act_sets_weak_i.append([j for j in neig_act_sets[i][0] if j not in list(comb_weakly_act)])
-                                # update differences wrt the active set of the parent CR
-                                neig_act_sets_weak_i.append(neig_act_sets[i][1] + [-j for j in list(comb_weakly_act)])
-                                # copy information of the parent's facet
-                                neig_act_sets_weak_i.append(neig_act_sets[i][2:3])
-                    # update the list of potential active sets generated because of wekly active constraints
-                    neig_act_sets_weak.append(neig_act_sets_weak_i)
-                # add all the new potential sets to the list
-                neig_act_sets += neig_act_sets_weak
-        self.neig_act_sets = neig_act_sets
-        return
+        ### candidate active sets for the neighboring critical regions
+        # detect coincident facets
+        coinc_facets_list = coinc_facets_types(self.act_set, self.inact_set, self.poly_t12)
+        # candidate active sets (without considering weakly active constraints)
+        neig_act_set_list = neig_act_set_generator(self.act_set, self.inact_set, coinc_facets_list, self.poly_t12)
+        # detect weakly active constraints
+        [weakly_act, weakly_act_set] = weak_act_set_detector(self.act_set, lhs_t2, rhs_t2)
+        # candidate active sets (considering weakly active constraints)
+        if weakly_act:
+            # add all the new candidate sets to the list
+            neig_act_set_list_weak = neig_act_set_if_weak(weakly_act_set, neig_act_set_list)
+            neig_act_set_list += neig_act_set_list_weak
+        self.neig_act_set_list = neig_act_set_list
 
     def z_opt(self, x):
         """
@@ -565,6 +524,139 @@ class CriticalRegion:
             lam_opt[self.act_set[i],0] = lam_A_opt[i]
         return lam_opt
 
+def coinc_facets_types(act_set, inact_set, poly_t12):
+    """
+    returns the list of all the coincident facets of a critical region:
+    enumerated in the as in the equation G z <= W + S x ("original enumeration")
+    and and labeled as type1 or type 2
+    INPUTS:
+    [act_set, inact_set] -> active and inactive sets of the parent critical region
+    poly_t12                           -> polyhedron describing the parent critical region
+    OUTPUTS:
+    coinc_facets_list -> list of coincident facts indices and types
+    """
+    coinc_facets_list = []
+    # for all the sets of coincident facets of the polyhedron
+    for facets in poly_t12.coinc_facets:
+        ind_list = []
+        type_list = []
+        # for each facet of each set
+        for facet in facets:
+            # if the facet is related to an inactive constraint (type 1)
+            n_inact = len(inact_set)
+            if facet < n_inact:
+                ind_list += [inact_set[facet]]
+                type_list += ['t1']
+            # if the facet is related to an active constraint (type 2)
+            else:
+                ind_list += [act_set[facet - n_inact]]
+                type_list += ['t2']
+        # add info to the list
+        coinc_facets_list.append([ind_list, type_list])
+    return coinc_facets_list
+
+def neig_act_set_generator(act_set, inact_set, coinc_facets_list, poly_t12):
+    """
+    returns the list of candidate active sets for the neighboring regions to the one considered (called "parent"),
+    Theorem 2 and Corollary 1 are here applied
+    INPUTS:
+    [act_set, inact_set] -> active and inactive sets of the parent critical region
+    coinc_facets_list                  -> list of the coincident facets of the parent state-space polyhedron
+    poly_t12                           -> polyhedron describing the parent critical region
+    OUTPUTS:
+    neig_act_set_list -> list of candidate active sets (including the center of the facet that generated each candidate and its gradient)
+    """
+    neig_act_set_list = []
+    # for all the facets of this critical region
+    for i in range(0,len(poly_t12.min_facets_indices)):
+        # store vector normal to the shared facet (needed to cope with licq fails!))
+        norm_vec = poly_t12.lhs[i,:]
+        norm_vec = norm_vec.reshape(len(norm_vec),1)
+        # store center of the shared facet (needed to cope with licq fails!))
+        center = poly_facet_center(poly_t12, poly_t12.lhs[i,:], poly_t12.rhs[i])
+        # initialize the list containing the difference of active set between parent CR and child CR
+        cand_act_set_diff = []
+        # start with the active set of the parent CR
+        cand_act_set = act_set[:]
+        # path from the index "i" to the index in the "original enumeration" (called "ind")
+        ind = poly_t12.min_facets_indices[i]
+        n_inact = len(inact_set)
+        if ind < n_inact:
+            ind = inact_set[ind]
+        else:
+            ind = act_set[ind - n_inact]
+        # generate candidate active sets for each facet
+        for coinc_facets in coinc_facets_list:
+            if ind in coinc_facets[0]:
+                # a new constraint becomes active (or inactive) for each coincident facet
+                for j in range(0,len(coinc_facets[0])):
+                    if coinc_facets[1][j] == 't1':
+                        cand_act_set.append(coinc_facets[0][j])
+                        cand_act_set_diff.append(coinc_facets[0][j])
+                    else:
+                        cand_act_set.remove(coinc_facets[0][j])
+                        cand_act_set_diff.append(coinc_facets[0][j])
+        cand_act_set.sort()
+        # store every info about each set of coincident facets of the parent CR
+        neig_act_set_list.append([cand_act_set, cand_act_set_diff, center, norm_vec])
+    return neig_act_set_list
+
+def weak_act_set_detector(act_set, lhs_t2, rhs_t2, toll=1e-6):
+    """
+    returns the list of constraints that are weakly active in the whole critical region
+    enumerated in the as in the equation G z <= W + S x ("original enumeration")
+    (by convention weakly active constraints are included among the active set, so that only constraints of type 2 are anlyzed)
+    INPUTS:
+    act_set          -> active set of the parent critical region
+    [lhs_t2, rhs_t2] -> left- and right-hand side of the constraints of type 2 of the parent CR
+    toll             -> tollerance in the detection
+    OUTPUTS:
+    weakly_act     -> flag determining if the CR analyzed has weakly active constraints
+    weakly_act_set -> list of weakly active constraints
+    """
+    weakly_act = False
+    weakly_act_set = []
+    # weakly active constraints are included in the active set
+    for i in range(0, lhs_t2.shape[0]):
+        # to be weakly active in the whole region they can only be in the form 0 x <= 0 (sure ???)
+        if np.linalg.norm(lhs_t2[i,:]) + np.absolute(rhs_t2[i,:]) < toll:
+            print('Weakly active constraint detected!')
+            # act_set[i] maps to index i into the "original enumeration"
+            weakly_act_set.append(act_set[i])
+            weakly_act = True
+    return [weakly_act, weakly_act_set]
+
+def neig_act_set_if_weak(weakly_act_set, neig_act_set_list):
+    """
+    returns the additional condidate active sets that are caused by weakly active constraints (theorem 5)
+    INPUTS:
+    weakly_act_set    -> indices of the weakly active contraints
+    neig_act_set_list -> list of candidate neighboring active sets
+    OUTPUTS:
+    neig_act_set_list_weak -> additional candidate active sets to be taken into
+    """
+    # additional candidate active sets
+    neig_act_set_list_weak = []
+    # for each one of the already computed candidate active sets
+    for i in range(0,len(neig_act_set_list)):
+        # for every possible combination of the weakly active constraints
+        for n_weakly_act in range(1,len(weakly_act_set)+1):
+            for comb_weakly_act in it.combinations(weakly_act_set, n_weakly_act):
+                neig_act_set_list_weak_i = []
+                # remove each combination from each candidate active set to create a new candidate active set
+                if set(neig_act_set_list[i][0]).issuperset(comb_weakly_act):
+                    # new candidate active set
+                    neig_act_set_list_weak_i.append([j for j in neig_act_set_list[i][0] if j not in list(comb_weakly_act)])
+                    # update differences wrt the active set of the parent CR
+                    neig_act_set_list_weak_i.append(neig_act_set_list[i][1] + [j for j in list(comb_weakly_act)])
+                    # copy information of the parent's facet
+                    neig_act_set_list_weak_i.append(neig_act_set_list[i][2])
+                    neig_act_set_list_weak_i.append(neig_act_set_list[i][3])
+                # update the list of candidate active sets generated because of wekly active constraints
+                neig_act_set_list_weak.append(neig_act_set_list_weak_i)
+    return neig_act_set_list_weak
+
+
 def act_set_if_degeneracy(parent, ind, H, G, W, S):
     """
     returns the active set in case that licq does not hold (theorem 4 and some more...)
@@ -576,11 +668,10 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
     act_set_child -> real active set of the child critical region (= False if the region is unfeasible)
     """
     # get the info related to the creation of the degenerate active set
-    [pot_act_set, pot_act_set_diff, center, norm_vec] = parent.neig_act_sets[ind]
+    [cand_act_set, cand_act_set_diff, center, norm_vec] = parent.neig_act_set_list[ind]
     toll = 1e-6
     # if more than one constraint has been activated (I think this does not apply)
-    # if len(pot_act_set_diff) != 1:
-    if True:
+    if len(cand_act_set_diff) != 1:
         print 'Cannot solve degeneracy with multiple active set changes! The solution of a QP is required...'
         dist = 1e-6
         # just sole the QP inside the new critical region to derive the active set
@@ -594,15 +685,15 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
             act_set_child = False
     else:
         # check that this never happens
-        if pot_act_set_diff[0] < 0:
+        if cand_act_set_diff[0] < 0:
             raise ValueError('LICQ must hold when a constraint is removed!')
         # compute optimal solution in the center of the shared facet
         z_center = parent.z_opt(center)
         # solve lp from theorem 4
-        G_A = G[pot_act_set,:]
+        G_A = G[cand_act_set,:]
         n_lam = G_A.shape[0]
         cost = np.zeros(n_lam)
-        cost[pot_act_set.index(pot_act_set_diff[0])] = -1.
+        cost[cand_act_set.index(cand_act_set_diff[0])] = -1.
         cons_lhs = np.vstack((G_A.T, -G_A.T, -np.eye(n_lam)))
         cons_rhs = np.vstack((-H.dot(z_center), H.dot(z_center), np.zeros((n_lam,1))))
         lam_bound = 1e6
@@ -615,7 +706,7 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
             act_set_child = []
             for i in range(0,n_lam):
                 if lam_sol[i,0] > toll:
-                    act_set_child += [pot_act_set[i]]
+                    act_set_child += [cand_act_set[i]]
     return act_set_child
 
 def licq_check(G, act_set):
