@@ -6,7 +6,7 @@ import scipy.signal as sig
 import scipy.spatial as spat
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import irispy as iri
+import irispy as iris
 import itertools as it
 
 def dare(A, B, Q, R):
@@ -62,9 +62,9 @@ def moas(A, lhs_x, rhs_x):
     rhs_moas = cons_rhs
     return [lhs_moas, rhs_moas, t]
 
-def linSysEvo(A, B, N):
+def lin_sys_evo(A, B, N):
     """
-    linSysEvo(A, B, N):
+    lin_sys_evo(A, B, N):
     returns the free and forced evolution matrices
     INPUTS:
     A -> state transition matrix
@@ -132,7 +132,7 @@ def ocp_cost_fun(A, B, Q, R, P, N):
     # quadratic term in the input sequence
     q_in = la.block_diag(*[R for k in range(0, N)])
     # evolution of the system
-    [for_evo, free_evo] = linSysEvo(A,B,N)
+    [for_evo, free_evo] = lin_sys_evo(A,B,N)
     # quadratic term
     H = 2*(q_in+for_evo.T.dot(q_st.dot(for_evo)))
     # linear term
@@ -160,7 +160,7 @@ def ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_xN, rhs_xN, N):
     W_u = np.vstack([rhs_u for k in range(0, N)])
     E_u = np.zeros((W_u.shape[0],n_x))
     # evolution of the system
-    [for_evo, free_evo] = linSysEvo(A, B, N)
+    [for_evo, free_evo] = lin_sys_evo(A, B, N)
     # state constraints
     lhs_x_diag = la.block_diag(*[lhs_x for k in range(1, N+1)])
     G_x = lhs_x_diag.dot(for_evo)
@@ -254,8 +254,8 @@ def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp, ter_cons):
         rhs_x_cl = np.vstack((rhs_x,rhs_u))
         [lhs_moas, rhs_moas, t] = moas(A_cl, lhs_x_cl, rhs_x_cl)
         poly_moas = Poly(lhs_moas, rhs_moas)
-        lhs_xN = poly_moas.lhs
-        rhs_xN = poly_moas.rhs
+        lhs_xN = poly_moas.lhs_min
+        rhs_xN = poly_moas.rhs_min
     # elif ter_cons == 'origin':
     #     P = np.zeros((n_x,n_x))
     #     lhs_xN = np.vstack((np.eye(n_x), - np.eye(n_x)))
@@ -269,9 +269,9 @@ def qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp, ter_cons):
     [H, F] = ocp_cost_fun(A, B, Q, R, P, N_ocp)
     # remove always-redundant constraints (coincident constraints are extremely problematic!)
     poly_cons = Poly(np.hstack((G, -E)), W)
-    G = poly_cons.lhs[:,:n_u*N_ocp]
-    E = - poly_cons.lhs[:,n_u*N_ocp:]
-    W = poly_cons.rhs
+    G = poly_cons.lhs_min[:,:n_u*N_ocp]
+    E = - poly_cons.lhs_min[:,n_u*N_ocp:]
+    W = poly_cons.rhs_min
     return [H, F, G, W, E]
 
 class Poly:
@@ -284,39 +284,66 @@ class Poly:
         verts              -> vertices of the polyhedron
     """
 
-    def __init__(self, lhs, rhs, x_bound=1e6):
-        ### scale polyhedron equations to avoid numeric errors
-        for i in range(0,lhs.shape[0]):
-            norm_fact = np.linalg.norm(np.hstack((lhs[i,:],rhs[i])))
-            if norm_fact > 1e-3:
+    def __init__(self, lhs, rhs, toll=1e-8, x_bound=1e6):
+
+        # size
+        self.n_fac = lhs.shape[0]
+        self.n_var = lhs.shape[1]
+
+        # normalize
+        for i in range(0, self.n_fac):
+            norm_fact = np.linalg.norm(lhs[i,:])
+            if norm_fact > toll:
                 lhs[i,:] = lhs[i,:]/norm_fact
                 rhs[i] = rhs[i]/norm_fact
 
-        ### ensure that the polyhedron is not empty
-        x_feasible = lin_or_quad_prog(np.array([]), np.zeros(lhs[0,:].shape), lhs, rhs, x_bound)[0]
-        self.x_bound = x_bound
-        self.empty = any(np.isnan(x_feasible))
-
-        ### minimal representation of the polyhedron
-        n = lhs.shape[1]
-        m = lhs.shape[0]
+        # check if it is empty
+        x_feas = lin_or_quad_prog(np.array([]), np.zeros(self.n_var), lhs, rhs, x_bound)[0]
+        self.empty = any(np.isnan(x_feas))
         if self.empty:
             print('Empty polyhedron!')
-        else:
-            self.coinc_facets = poly_coinc_facets(lhs,rhs)
-            [self.lhs, self.rhs, self.min_facets_indices] = poly_min_facets(lhs, rhs, x_bound)
-     
-            ### vertices of the polyhedron
-            # bounding box
-            lhs_bound = np.vstack((self.lhs, np.eye(n), -np.eye(n)))
-            rhs_bound = np.vstack((self.rhs, x_bound*np.ones((2*n,1))))
-            poly = iri.Polyhedron(lhs_bound, rhs_bound)
-            self.verts = np.vstack(poly.generatorPoints())
-            toll = 1e-6
-            if any(np.absolute(self.verts).flatten() >= x_bound - toll):
-                print("Unbounded polyhedron in the domain ||x||_inf <= " + str(x_bound))
+            return
 
-    def plot(self, line_style='b'):
+        # minimal representation
+        [self.lhs_min, self.rhs_min] = poly_min_facets(lhs, rhs, toll, x_bound)
+        self.n_fac_min = self.lhs_min.shape[0]
+
+        # indices of minimal facets in the original enumeration (coincident facets are also detected)
+        min_fac_ind = []
+        lrhs = np.hstack((lhs, rhs))
+        for i in range(0, self.n_fac_min):
+            min_fac_ind_i = []
+            lrhs_min_i = np.hstack((self.lhs_min[i,:], self.rhs_min[i]))
+            min_fac_ind_i = np.where(np.all(np.isclose(lrhs, lrhs_min_i, toll, toll), axis=1))[0].tolist()
+            min_fac_ind.append(min_fac_ind_i)
+        self.min_fac_ind = min_fac_ind
+
+        # vertices of the polyhedron
+        lhs_bound = np.vstack((self.lhs_min, np.eye(self.n_var), -np.eye(self.n_var)))
+        rhs_bound = np.vstack((self.rhs_min, x_bound*np.ones((2*self.n_var,1))))
+        poly = iris.Polyhedron(lhs_bound, rhs_bound)
+        self.verts = np.vstack(poly.generatorPoints())
+        if any(np.absolute(self.verts).flatten() >= x_bound - toll):
+            print("Unbounded polyhedron in the domain ||x||_inf <= " + str(x_bound))
+
+        # facet centers and vertices
+        fac_verts = []
+        fac_centers = []
+        for i in range(0, self.n_fac_min):
+            verts_i = np.array([]).reshape(0, self.n_var)
+            for vert in self.verts:
+                if np.absolute(self.lhs_min[i,:].dot(vert.T)-self.rhs_min[i]) < toll:
+                    verts_i = np.vstack((verts_i, vert))
+            if verts_i.shape[0] < self.n_var:
+                print '(This error is likely to be caused by numeric issues ...)'
+                raise ValueError('The given equation is not a facet of the polyhedron!')
+            center_i = np.mean(verts_i, axis=0)
+            fac_verts.append(verts_i)
+            fac_centers.append(center_i.reshape(len(center_i),1))
+        self.fac_verts = fac_verts
+        self.fac_centers = fac_centers
+
+    def plot2d(self, line_style='b', dim_proj=[0,1], x_bound=1e6, toll=1e-6):
         """
         Plots the "D" polyhedron in the (x_1,x_2) plane
         INPUTS:
@@ -326,92 +353,31 @@ class Poly:
         """
         if self.empty:
             raise ValueError('Empty polyhedron!')
-        n = self.lhs.shape[1]
-        if n > 2:
-            raise ValueError('Unable to plot polyhedrons in more than 2 dimensions!')
-        hull = spat.ConvexHull(self.verts)
+        n = self.lhs_min.shape[1]
+        if len(dim_proj) != 2:
+            raise ValueError('Only 2d polyhedrons!')
+        verts_proj = self.verts[:,dim_proj]
+        hull = spat.ConvexHull(verts_proj)
         for simp in hull.simplices:
-            self.poly_plot, = plt.plot(self.verts[simp, 0], self.verts[simp, 1], line_style)
-        toll = 1e-6
+            self.poly_plot, = plt.plot(verts_proj[simp, 0], verts_proj[simp, 1], line_style)
         vert_unb = np.array([]).reshape(0,2)
         for i in range(self.verts.shape[0]):
-            if any(np.absolute(self.verts[i,:]) >= self.x_bound - toll):
-                vert_unb = np.vstack((vert_unb, self.verts[i,:]))
-        if any(np.absolute(self.verts.flatten()) >= self.x_bound - toll):
+            if any(np.absolute(verts_proj[i,:]) >= x_bound - toll):
+                vert_unb = np.vstack((vert_unb, verts_proj[i,:]))
+        if any(np.absolute(verts_proj.flatten()) >= x_bound - toll):
             plt.scatter(vert_unb[:,0], vert_unb[:,1], color='r', alpha=.5, label='Unbounded vertices')
             plt.legend(loc=1)
         # ### plot center
-        # center = np.mean(self.verts[:-1,:], axis=0)
+        # center = np.mean(verts_proj[:-1,:], axis=0)
         # plt.scatter(center[0], center[1], color='g')
         # ###
         plt.xlabel(r'$x_1$')
         plt.ylabel(r'$x_2$')
         return self.poly_plot
+    
 
-def poly_facet_center(poly, lhs_facet, rhs_facet):
-    """
-    derives the center of a facet which belongs to a polyhedron
-    INPUTS:
-    poly -> polyhedron
-    [lhs_facet, rhs_facet] -> equation of the facet (lhs_facet * x = rhs_facet)
-    OUTPUTS:
-    center -> coordinates of the center of the polyhedron facet
-    """
-    facet_edeges = np.array([]).reshape(0,len(lhs_facet))
-    toll = 1e-9
-    for vert in poly.verts:
-        if np.absolute(lhs_facet.dot(vert.T)-rhs_facet) < toll:
-            facet_edeges = np.vstack((facet_edeges, vert))
-    if facet_edeges.shape[0] < 2:
-        print '!!! This error can be caused by numeric issues !!!'
-        print 'At least two of the following values'
-        for vert in poly.verts:
-            print lhs_facet.dot(vert.T)-rhs_facet
-        print 'should be zero with a tollerance of ' + str(toll) + '.'
-        print 'These are generated by the expression:'
-        print str(lhs_facet)
-        print 'times each one of the following'
-        print poly.verts
-        print 'minus'
-        print str(rhs_facet) + '.'
-        print 'This is the plot of the region ...'
-        poly.plot()
-        plt.show()
-        raise ValueError('The given equation is not a facet of the polyhedron!')
-    center = np.mean(facet_edeges, axis=0)
-    return center.reshape(len(center),1)
 
-def poly_coinc_facets(lhs,rhs):
-    """
-    poly_coinc_facets(lhs,rhs):
-    returns the coincident factes of a polyhedron
-    INPUTS:
-    [lhs, rhs] -> left- and right-hand-side of the representation of the polyhedron
-    OUTPUTS:
-    coinc_facets -> list of lists of coincident facets
-    """
-    m = lhs.shape[0]
-    # concatenate left- and right-hand sides
-    lrhs = np.hstack((lhs,rhs))
-    # normalize each row
-    for i in range(0, m):
-        lrhs[i,:] = lrhs[i,:]/(np.linalg.norm(lrhs[i,:]))
-    # list of lists of coincident facets
-    coinc_facets = []
-    # look for coincident facets
-    for i in range(0, m):
-        # if the ith facet is not already be found to be coincident to someother facets
-        if i not in [j for sublist in coinc_facets for j in sublist]:
-            coinc_facets_i = [i]
-            # check coincidence with all the others
-            for j in range(i+1, m):
-                if all(np.isclose(lrhs[i,:], lrhs[j,:])):
-                    coinc_facets_i.append(j)
-            # if coincidence append to coinc_facets
-            coinc_facets.append(coinc_facets_i)
-    return coinc_facets
-
-def poly_min_facets(lhs, rhs, x_bound=1e6):
+def poly_min_facets(lhs, rhs, toll=1e-8, x_bound=1e6):
     """
     poly_min_facets(lhs, rhs, x_bound=1e6):
     returns the minimum set of factes to represent a polyhedron (in case of coincident facets, only one is mantained)
@@ -420,46 +386,38 @@ def poly_min_facets(lhs, rhs, x_bound=1e6):
     x_bound    -> bound for unbounded polyhedron
     OUTPUTS:
     [lhs_min, rhs_min] -> minimal representation of the polyhedron
-    min_facets_indices -> indices of the non-redundant facets in the original representation
     """
-    n = lhs.shape[1]
-    m = lhs.shape[0]
     # list of non-redundant facets
-    min_facets_indices = range(0, m)
-    for i in range(0, m):
+    min_pos = range(0, lhs.shape[0])
+    for i in range(0, lhs.shape[0]):
         # remove redundant constraints
-        lhs_i = lhs[min_facets_indices,:]
+        lhs_i = lhs[min_pos,:]
         # relax the ith constraint
         rhs_relax = np.zeros(np.shape(rhs))
         rhs_relax[i] += 1
-        rhs_i = (rhs + rhs_relax)[min_facets_indices];
+        rhs_i = (rhs + rhs_relax)[min_pos];
         # check redundancy
-        f_i = -lhs[i,:].T
-        cost_i = lin_or_quad_prog(np.array([]), f_i, lhs_i, rhs_i, x_bound)[1]
+        cost_i = lin_or_quad_prog(np.array([]), -lhs[i,:].T, lhs_i, rhs_i, x_bound)[1]
         cost_i = - cost_i - rhs[i]
         # remove redundant facets from the list
-        toll = 1e-6
-        if np.absolute(cost_i) < toll:
-            print "Coincident hyperplanes with tollerance " + str(cost_i[0])
         if cost_i < toll:
-            min_facets_indices.remove(i)
-    min_facets_indices = min_facets_indices
-    lhs_min = lhs[min_facets_indices,:]
-    rhs_min = rhs[min_facets_indices]
-    return [lhs_min, rhs_min, min_facets_indices]
+            min_pos.remove(i)
+    lhs_min = lhs[min_pos,:]
+    rhs_min = rhs[min_pos]
+    return [lhs_min, rhs_min]
 
 class CriticalRegion:
-    # this is structured following:
+    # this is from:
     # Tondel, Johansen, Bemporad - An algorithm for multi-parametric quadratic programming and explicit MPC solutions
 
     def __init__(self, act_set, H, G, W, S):
 
-        ### active set
+        # active set
+        print 'Computing critical region for the active set ' + str(act_set)
         self.act_set = act_set
         self.inact_set = list(set(range(0, G.shape[0])) - set(act_set))
-        n_inact = len(self.inact_set)
 
-        ### optimal solution as a function of x
+        # optimal solution as a function of x
         H_inv = np.linalg.inv(H)
         # active and inactive constraints
         [G_A, W_A, S_A] = [G[self.act_set,:], W[self.act_set,:], S[self.act_set,:]]
@@ -472,32 +430,40 @@ class CriticalRegion:
         self.z_trans = - H_inv.dot(G_A.T.dot(self.lam_A_trans))
         self.z_lin = - H_inv.dot(G_A.T.dot(self.lam_A_lin))
 
-        ### state-space polyhedron 
+        # state-space polyhedron 
         # equation (12) (revised, only inactive indices...)
         lhs_t1 = G_I.dot(self.z_lin) - S_I
         rhs_t1 = - G_I.dot(self.z_trans) + W_I
         # equation (13)
         lhs_t2 = H_a.dot(S_A)
         rhs_t2 = - H_a.dot(W_A)
+        # reorder equations
+        lhs_t12 = np.array([]).reshape((0,S.shape[1]))
+        rhs_t12 = np.array([]).reshape((0,1))
+        for i in range(G.shape[0]):
+            if i in self.act_set:
+                lhs_t12 = np.vstack((lhs_t12,lhs_t2[self.act_set.index(i),:]))
+                rhs_t12 = np.vstack((rhs_t12,rhs_t2[self.act_set.index(i),0]))
+            else:
+                lhs_t12 = np.vstack((lhs_t12,lhs_t1[self.inact_set.index(i),:]))
+                rhs_t12 = np.vstack((rhs_t12,rhs_t1[self.inact_set.index(i),0]))
         # construct polyhedron
-        self.poly_t12 = Poly(np.vstack((lhs_t1, lhs_t2)), np.vstack((rhs_t1, rhs_t2)))
+        self.poly_t12 = Poly(lhs_t12, rhs_t12)
         # if the polyhedron is empty return 
         if self.poly_t12.empty:
             return
 
-        ### candidate active sets for the neighboring critical regions
-        # detect coincident facets
-        coinc_facets_list = coinc_facets_types(self.act_set, self.inact_set, self.poly_t12)
+        # candidate active sets for the neighboring critical regions
         # candidate active sets (without considering weakly active constraints)
-        neig_act_set_list = neig_act_set_generator(self.act_set, self.inact_set, coinc_facets_list, self.poly_t12)
+        cand_act_sets = cand_act_sets_generator(self.act_set, self.poly_t12)
         # detect weakly active constraints
         [weakly_act, weakly_act_set] = weak_act_set_detector(self.act_set, lhs_t2, rhs_t2)
         # candidate active sets (considering weakly active constraints)
         if weakly_act:
             # add all the new candidate sets to the list
-            neig_act_set_list_weak = neig_act_set_if_weak(weakly_act_set, neig_act_set_list)
-            neig_act_set_list += neig_act_set_list_weak
-        self.neig_act_set_list = neig_act_set_list
+            cand_act_sets = neig_act_set_if_weak(weakly_act_set, cand_act_sets)
+        self.cand_act_sets = cand_act_sets
+
 
     def z_opt(self, x):
         """
@@ -524,88 +490,34 @@ class CriticalRegion:
             lam_opt[self.act_set[i],0] = lam_A_opt[i]
         return lam_opt
 
-def coinc_facets_types(act_set, inact_set, poly_t12):
+def cand_act_sets_generator(act_set, poly_t12):
     """
-    returns the list of all the coincident facets of a critical region:
-    enumerated in the as in the equation G z <= W + S x ("original enumeration")
-    and and labeled as type1 or type 2
-    INPUTS:
-    [act_set, inact_set] -> active and inactive sets of the parent critical region
-    poly_t12                           -> polyhedron describing the parent critical region
-    OUTPUTS:
-    coinc_facets_list -> list of coincident facts indices and types
-    """
-    coinc_facets_list = []
-    # for all the sets of coincident facets of the polyhedron
-    for facets in poly_t12.coinc_facets:
-        ind_list = []
-        type_list = []
-        # for each facet of each set
-        for facet in facets:
-            # if the facet is related to an inactive constraint (type 1)
-            n_inact = len(inact_set)
-            if facet < n_inact:
-                ind_list += [inact_set[facet]]
-                type_list += ['t1']
-            # if the facet is related to an active constraint (type 2)
-            else:
-                ind_list += [act_set[facet - n_inact]]
-                type_list += ['t2']
-        # add info to the list
-        coinc_facets_list.append([ind_list, type_list])
-    return coinc_facets_list
-
-def neig_act_set_generator(act_set, inact_set, coinc_facets_list, poly_t12):
-    """
-    returns the list of candidate active sets for the neighboring regions to the one considered (called "parent"),
+    returns a condidate active set for each facet of a critical region
     Theorem 2 and Corollary 1 are here applied
     INPUTS:
-    [act_set, inact_set] -> active and inactive sets of the parent critical region
-    coinc_facets_list                  -> list of the coincident facets of the parent state-space polyhedron
-    poly_t12                           -> polyhedron describing the parent critical region
+    act_set  -> active set of the parent CR
+    poly_t12 -> polyhedron describing the parent CR
     OUTPUTS:
-    neig_act_set_list -> list of candidate active sets (including the center of the facet that generated each candidate and its gradient)
+    cand_act_sets -> list of candidate active sets (ordered as the facets of the parent polyhedron, i.e. lhs_min)
     """
-    neig_act_set_list = []
-    # for all the facets of this critical region
-    for i in range(0,len(poly_t12.min_facets_indices)):
-        # store vector normal to the shared facet (needed to cope with licq fails!))
-        norm_vec = poly_t12.lhs[i,:]
-        norm_vec = norm_vec.reshape(len(norm_vec),1)
-        # store center of the shared facet (needed to cope with licq fails!))
-        center = poly_facet_center(poly_t12, poly_t12.lhs[i,:], poly_t12.rhs[i])
-        # initialize the list containing the difference of active set between parent CR and child CR
-        cand_act_set_diff = []
-        # start with the active set of the parent CR
-        cand_act_set = act_set[:]
-        # path from the index "i" to the index in the "original enumeration" (called "ind")
-        ind = poly_t12.min_facets_indices[i]
-        n_inact = len(inact_set)
-        if ind < n_inact:
-            ind = inact_set[ind]
-        else:
-            ind = act_set[ind - n_inact]
-        # generate candidate active sets for each facet
-        for coinc_facets in coinc_facets_list:
-            if ind in coinc_facets[0]:
-                # a new constraint becomes active (or inactive) for each coincident facet
-                for j in range(0,len(coinc_facets[0])):
-                    if coinc_facets[1][j] == 't1':
-                        cand_act_set.append(coinc_facets[0][j])
-                        cand_act_set_diff.append(coinc_facets[0][j])
-                    else:
-                        cand_act_set.remove(coinc_facets[0][j])
-                        cand_act_set_diff.append(coinc_facets[0][j])
-        cand_act_set.sort()
-        # store every info about each set of coincident facets of the parent CR
-        neig_act_set_list.append([cand_act_set, cand_act_set_diff, center, norm_vec])
-    return neig_act_set_list
+    cand_act_sets = []
+    for i in range(0, poly_t12.n_fac_min):
+        cand_act_set_i = act_set[:]
+        for ind in poly_t12.min_fac_ind[i]:
+            if ind in cand_act_set_i:
+                cand_act_set_i.remove(ind)
+            else:
+                cand_act_set_i.append(ind)
+            cand_act_set_i.sort()
+            cand_act_sets.append([cand_act_set_i])
+    return cand_act_sets
 
-def weak_act_set_detector(act_set, lhs_t2, rhs_t2, toll=1e-6):
+def weak_act_set_detector(act_set, lhs_t2, rhs_t2, toll=1e-8):
     """
     returns the list of constraints that are weakly active in the whole critical region
     enumerated in the as in the equation G z <= W + S x ("original enumeration")
-    (by convention weakly active constraints are included among the active set, so that only constraints of type 2 are anlyzed)
+    (by convention weakly active constraints are included among the active set,
+    so that only constraints of type 2 are anlyzed)
     INPUTS:
     act_set          -> active set of the parent critical region
     [lhs_t2, rhs_t2] -> left- and right-hand side of the constraints of type 2 of the parent CR
@@ -617,47 +529,37 @@ def weak_act_set_detector(act_set, lhs_t2, rhs_t2, toll=1e-6):
     weakly_act = False
     weakly_act_set = []
     # weakly active constraints are included in the active set
-    for i in range(0, lhs_t2.shape[0]):
+    for i in range(0, len(act_set)):
         # to be weakly active in the whole region they can only be in the form 0 x <= 0 (sure ???)
         if np.linalg.norm(lhs_t2[i,:]) + np.absolute(rhs_t2[i,:]) < toll:
             print('Weakly active constraint detected!')
-            # act_set[i] maps to index i into the "original enumeration"
             weakly_act_set.append(act_set[i])
             weakly_act = True
     return [weakly_act, weakly_act_set]
 
-def neig_act_set_if_weak(weakly_act_set, neig_act_set_list):
+def neig_act_set_if_weak(weakly_act_set, cand_act_sets):
     """
     returns the additional condidate active sets that are caused by weakly active constraints (theorem 5)
     INPUTS:
     weakly_act_set    -> indices of the weakly active contraints
-    neig_act_set_list -> list of candidate neighboring active sets
+    cand_act_sets -> list of candidate neighboring active sets
     OUTPUTS:
-    neig_act_set_list_weak -> additional candidate active sets to be taken into
+    cand_act_sets -> complete list of candidate active sets
     """
-    # additional candidate active sets
-    neig_act_set_list_weak = []
-    # for each one of the already computed candidate active sets
-    for i in range(0,len(neig_act_set_list)):
+    for i in range(0,len(cand_act_sets)):
         # for every possible combination of the weakly active constraints
         for n_weakly_act in range(1,len(weakly_act_set)+1):
             for comb_weakly_act in it.combinations(weakly_act_set, n_weakly_act):
-                neig_act_set_list_weak_i = []
+                cand_act_sets_weak_i = []
                 # remove each combination from each candidate active set to create a new candidate active set
-                if set(neig_act_set_list[i][0]).issuperset(comb_weakly_act):
+                if set(cand_act_sets[i][0]).issuperset(comb_weakly_act):
                     # new candidate active set
-                    neig_act_set_list_weak_i.append([j for j in neig_act_set_list[i][0] if j not in list(comb_weakly_act)])
-                    # update differences wrt the active set of the parent CR
-                    neig_act_set_list_weak_i.append(neig_act_set_list[i][1] + [j for j in list(comb_weakly_act)])
-                    # copy information of the parent's facet
-                    neig_act_set_list_weak_i.append(neig_act_set_list[i][2])
-                    neig_act_set_list_weak_i.append(neig_act_set_list[i][3])
+                    cand_act_sets_weak_i.append([j for j in cand_act_sets[i][0] if j not in list(comb_weakly_act)])
                 # update the list of candidate active sets generated because of wekly active constraints
-                neig_act_set_list_weak.append(neig_act_set_list_weak_i)
-    return neig_act_set_list_weak
+                cand_act_sets[i].append(cand_act_sets_weak_i)
+    return cand_act_sets
 
-
-def act_set_if_degeneracy(parent, ind, H, G, W, S):
+def degeneracy_fixer(cand_act_set, ind, parent, H, G, W, S, dist=1e-5, lam_bound=1e6, toll=1e-6):
     """
     returns the active set in case that licq does not hold (theorem 4 and some more...)
     INPUTS:
@@ -667,15 +569,12 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
     OUTPUTS:
     act_set_child -> real active set of the child critical region (= False if the region is unfeasible)
     """
-    # get the info related to the creation of the degenerate active set
-    [cand_act_set, cand_act_set_diff, center, norm_vec] = parent.neig_act_set_list[ind]
-    toll = 1e-6
-    # if more than one constraint has been activated (I think this does not apply)
-    if len(cand_act_set_diff) != 1:
+    x_center = parent.poly_t12.fac_centers[ind]
+    act_set_change = list(set(parent.act_set).symmetric_difference(set(cand_act_set)))
+    if len(act_set_change) > 1:
         print 'Cannot solve degeneracy with multiple active set changes! The solution of a QP is required...'
-        dist = 1e-6
         # just sole the QP inside the new critical region to derive the active set
-        x = center + dist*norm_vec
+        x = x_center + dist*parent.poly_t12.lhs_min[ind,:].reshape(x_center.shape)
         z = lin_or_quad_prog(H, np.zeros((H.shape[0],1)), G, W+S.dot(x))[0]
         cons_val = G.dot(z) - W - S.dot(x)
         # new active set for the child
@@ -684,19 +583,15 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
         if not act_set_child:
             act_set_child = False
     else:
-        # check that this never happens
-        if cand_act_set_diff[0] < 0:
-            raise ValueError('LICQ must hold when a constraint is removed!')
         # compute optimal solution in the center of the shared facet
-        z_center = parent.z_opt(center)
+        z_center = parent.z_opt(parent.poly_t12.fac_centers[ind])
         # solve lp from theorem 4
         G_A = G[cand_act_set,:]
         n_lam = G_A.shape[0]
         cost = np.zeros(n_lam)
-        cost[cand_act_set.index(cand_act_set_diff[0])] = -1.
+        cost[cand_act_set.index(act_set_change[0])] = -1.
         cons_lhs = np.vstack((G_A.T, -G_A.T, -np.eye(n_lam)))
         cons_rhs = np.vstack((-H.dot(z_center), H.dot(z_center), np.zeros((n_lam,1))))
-        lam_bound = 1e6
         lam_sol = lin_or_quad_prog(np.array([]), cost, cons_lhs, cons_rhs, lam_bound)[0]
         # if the solution in unbounded the region is not feasible
         if np.max(lam_sol) > lam_bound - toll:
@@ -709,7 +604,7 @@ def act_set_if_degeneracy(parent, ind, H, G, W, S):
                     act_set_child += [cand_act_set[i]]
     return act_set_child
 
-def licq_check(G, act_set):
+def licq_check(G, act_set, max_cond=1e9):
     """
     checks if licq holds
     INPUTS:
@@ -720,7 +615,6 @@ def licq_check(G, act_set):
     """
     G_A = G[act_set,:]
     licq = True
-    max_cond = 1e9
     cond = np.linalg.cond(G_A.dot(G_A.T))
     if cond > max_cond:
         licq = False

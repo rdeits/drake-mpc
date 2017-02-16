@@ -87,9 +87,9 @@ def plot_cons_moas(A, lhs_x, rhs_x, t):
         print 'stop'
         poly_x_i = Poly(lhs_x_i, rhs_x*1.) # ? if I don't do this, the modification to this value that I make inside the class changes also the value otuside the class!!!!
         if i == t+1:
-            redund_plot = poly_x_i.plot('g-.')
+            redund_plot = poly_x_i.plot2d('g-.')
         else:
-            active_plot = poly_x_i.plot('y-.')
+            active_plot = poly_x_i.plot2d('y-.')
     return [active_plot, redund_plot]
 
 def plot_moas(lhs_moas, rhs_moas, t, A, N=0):
@@ -107,7 +107,7 @@ def plot_moas(lhs_moas, rhs_moas, t, A, N=0):
     n_x = A.shape[0]
     # plot MOAS polyhedron
     poly_moas = Poly(lhs_moas, rhs_moas)
-    moas_plot = poly_moas.plot('r-')
+    moas_plot = poly_moas.plot2d('r-')
     # simulate a trajectory for each vertex
     for i in range(0, poly_moas.verts.shape[0]):
         vert = poly_moas.verts[i,:].reshape(n_x,1)
@@ -130,7 +130,7 @@ def plot_nom_traj(x_traj_qp, x_traj_lqr, lhs_moas, rhs_moas):
     col_norm  = mpl.colors.Normalize(vmin=0, vmax=n_traj)
     scalar_map = mpl.cm.ScalarMappable(norm=col_norm, cmap=col_map)
     poly_moas = Poly(lhs_moas, rhs_moas)
-    moas_plot = poly_moas.plot('r-')
+    moas_plot = poly_moas.plot2d('r-')
     leg_plot = [moas_plot]
     leg_lab = ['MOAS']
     for i in range(0,n_traj):
