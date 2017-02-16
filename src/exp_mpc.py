@@ -1,5 +1,5 @@
 from mpc_functions import *
-from params_IP import *
+from params_DI import *
 
 # qp blocks
 [H, F, G, W, E] = qp_builder(A, B, Q, R, u_min, u_max, x_min, x_max, N_ocp, ter_cons)
@@ -11,46 +11,43 @@ S = E + G.dot(H_inv.dot(F.T))
 # start from the origin
 act_set = []
 cr0 = CriticalRegion(act_set, H, G, W, S)
-print 'Computing critical region for the active set ' + str(act_set)
-L_cand = [cr0]
-L_opt = []
-act_set_cand =[cr0.act_set]
+cr_to_be_tested = [cr0]
+cr_list = []
+act_sets_tested =[cr0.act_set]
 
 # explore the state space
-while L_cand:
+while cr_to_be_tested:
     # choose the first candidate in the list and remove it
-    cr = L_cand[0]
-    L_cand = L_cand[1:]
-    # be sure that the state-space polyhedron is not empty
+    cr = cr_to_be_tested[0]
+    cr_to_be_tested = cr_to_be_tested[1:]
     if not cr.poly_t12.empty:
         # add the CR to the list of critical regions
-        L_opt.append(cr)
+        cr_list.append(cr)
         # compute all the potential neighboring CRs (avoid copies)
-        for i in range(0,len(cr.neig_act_set_list)):
-            act_set = cr.neig_act_set_list[i][0]
-            if act_set not in act_set_cand:
-                act_set_cand.append(act_set)
-                licq = licq_check(G, act_set)
-                if licq:
-                    print 'Computing critical region for the active set ' + str(act_set)
-                    L_cand.append(CriticalRegion(act_set, H, G, W, S))
-                else:
-                    act_set = act_set_if_degeneracy(cr, i, H, G, W, S)
-                    if act_set:
-                        print 'Corrected active set ' + str(act_set)
+        for ind in range(0, cr.poly_t12.n_fac_min):
+            for act_set in cr.cand_act_sets[ind]:
+                if act_set not in act_sets_tested:
+                    act_sets_tested.append(act_set)
+                    licq = licq_check(G, act_set)
+                    if licq:
                         print 'Computing critical region for the active set ' + str(act_set)
-                        L_cand.append(CriticalRegion(act_set, H, G, W, S))
+                        cr_to_be_tested.append(CriticalRegion(act_set, H, G, W, S))
                     else:
-                        print "Unfeasible region detected!"
+                        act_set = degeneracy_fixer(act_set, ind, cr, H, G, W, S)
+                        if act_set:
+                            print 'Corrected active set ' + str(act_set)
+                            cr_to_be_tested.append(CriticalRegion(act_set, H, G, W, S))
+                        else:
+                            print "Unfeasible region detected!"
 
 # test the explicit solution
 
 # find the CR to which the test point belongs
-for cr in L_opt:
-	check = cr.poly_t12.lhs.dot(x_test) - cr.poly_t12.rhs
-	if np.max(check) <= 0:
-		cr_test = cr
-		break
+for cr in cr_list:
+    check = cr.poly_t12.lhs_min.dot(x_test) - cr.poly_t12.rhs_min
+    if np.max(check) <= 0:
+        cr_test = cr
+        break
 
 # derive explicit solution
 z_exp = cr_test.z_opt(x_test)
@@ -63,6 +60,6 @@ print "Optimal solution from implicit MPC: " + str(list(u_impl.flatten()))
 
 # plot the partition
 plt.scatter(x_test[0], x_test[1], color='g')
-for cr in L_opt:
-    cr.poly_t12.plot()
+for cr in cr_list:
+    cr.poly_t12.plot2d()
 plt.show()

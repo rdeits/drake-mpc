@@ -17,7 +17,7 @@ lhs_x_cl = np.vstack((lhs_x, lhs_u.dot(K)))
 rhs_x_cl = np.vstack((rhs_x, rhs_u))
 [lhs_moas, rhs_moas, t] = moas(A_cl, lhs_x_cl, rhs_x_cl)
 poly_moas = Poly(lhs_moas, rhs_moas)
-[lhs_moas, rhs_moas] = [poly_moas.lhs, poly_moas.rhs]
+[lhs_moas, rhs_moas] = [poly_moas.lhs_min, poly_moas.rhs_min]
 
 # QP blocks
 [G, W, E] = ocp_cons(A, B, lhs_u, rhs_u, lhs_x, rhs_x, lhs_moas, rhs_moas, N_ocp)
