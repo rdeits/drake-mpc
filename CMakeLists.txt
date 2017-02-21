@@ -4,8 +4,8 @@ project(drake-mpc)
 include(ExternalProject)
 
 ExternalProject_Add(drake
-  GIT_REPOSITORY git@github.com:rdeits/drake.git
-  GIT_TAG 7cdbd2ece7d31b2890bb7d82e3d1fc7a35676c20
+  GIT_REPOSITORY git@github.com:RobotLocomotion/drake.git
+  GIT_TAG 4ba9eb2119562adf674e80a6e7489e29d0b6a40a
   GIT_SUBMODULES drake/doc/textbook
   CMAKE_CACHE_ARGS
   	-DWITH_GUROBI:bool=ON

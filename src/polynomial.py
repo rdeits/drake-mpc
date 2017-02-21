@@ -25,6 +25,9 @@ class Polynomial(object):
     def derivative(self):
         return Polynomial([i * self[i] for i in range(1, self.degree + 1)])
 
+    def map(self, function):
+        return Polynomial(map(function, self.coeffs))
+
 
 class TestPolynomial(unittest.TestCase):
     def test_polynomial_eval(self):
@@ -40,6 +43,12 @@ class TestPolynomial(unittest.TestCase):
         p = Polynomial([3, 1, 7, 8, 2])
         dp = p.derivative()
         self.assertEqual(dp.coeffs, [1, 2 * 7, 3 * 8, 4 * 2])
+
+    def test_polynomial_map(self):
+        p = Polynomial([1, 2, 3, 4])
+        p2 = p.map(lambda x: x + 1)
+        self.assertEqual(p2.coeffs, [2, 3, 4, 5])
+
 
 
 if __name__ == '__main__':
