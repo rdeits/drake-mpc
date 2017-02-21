@@ -5,7 +5,7 @@ include(ExternalProject)
 
 ExternalProject_Add(drake
   GIT_REPOSITORY git@github.com:RobotLocomotion/drake.git
-  GIT_TAG 4ba9eb2119562adf674e80a6e7489e29d0b6a40a
+  GIT_TAG d96b2c113b083a2a5bdb2848369eb142f47b0165
   GIT_SUBMODULES drake/doc/textbook
   CMAKE_CACHE_ARGS
   	-DWITH_GUROBI:bool=ON
