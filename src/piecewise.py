@@ -5,6 +5,8 @@ import numpy as np
 
 
 class Piecewise(object):
+    __slots__ = ["breaks", "functions"]
+
     def __init__(self, breaks, functions):
         self.breaks = np.asarray(breaks)
         assert all(breaks[i] <= breaks[i + 1] for i in range(len(breaks) - 1))
@@ -27,8 +29,11 @@ class Piecewise(object):
     def __call__(self, x):
         return self.from_above(x)
 
-    def map(self, function):
-        return Piecewise(self.breaks, map(function, self.functions))
+    def map(self, function, *args, **kwargs):
+        return Piecewise(self.breaks, map(lambda f: function(f, *args, **kwargs), self.functions))
+
+    def derivative(self, *args, **kwargs):
+        return self.map(lambda f: f.derivative(*args, **kwargs))
 
 
 class TestPiecewise(unittest.TestCase):
