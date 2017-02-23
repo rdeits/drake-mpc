@@ -29,7 +29,7 @@ class BoxAtlas(object):
         pass
 
 
-def draw(vis, state, atlasinput):
+def draw(vis, state, atlasinput=None, env=None):
     vis["body"].setgeometry(vc.Box(lengths=[0.1, 0.1, 0.1]))
     vis["body"].settransform(vc.transformations.translation_matrix([state.qcom[0], 0, state.qcom[1]]))
     for (i, q) in enumerate(state.qlimb):
@@ -40,9 +40,24 @@ def draw(vis, state, atlasinput):
         v = limb_vis["position"]
         v.setgeometry(vc.Sphere(radius=0.05))
 
-        v = limb_vis["force"]
-        force = np.array([atlasinput.flimb[i][0], 0, atlasinput.flimb[i][1]])
-        v.setgeometry(vc.PolyLine(points=[[0, 0, 0], list(0.01 * force)], end_head=True))
+        if atlasinput is not None:
+            v = limb_vis["force"]
+            force = np.array([atlasinput.flimb[i][0], 0, atlasinput.flimb[i][1]])
+            v.setgeometry(vc.PolyLine(points=[[0, 0, 0], list(0.01 * force)], end_head=True))
+
+    if env is not None:
+        for (i, surface) in enumerate(env.surfaces):
+            verts2d = surface.pose_constraints.generatorPoints()
+            assert len(verts2d) == 2
+            length = np.linalg.norm(verts2d[1] - verts2d[0])
+            origin = 0.5 * (verts2d[0] + verts2d[1])
+            origin = [origin[0], 0, origin[1]]
+            box = vc.Box(lengths=[length, length, 0.01])
+            v = vis["environment"]["surface_{:d}".format(i)]
+            v.setgeometry(box)
+            angle = np.arctan2(verts2d[1][1] - verts2d[0][1], verts2d[1][0] - verts2d[0][0])
+            v.settransform(vc.transformations.rotation_matrix(angle, [0, 1, 0], origin).dot(vc.transformations.translation_matrix(origin)))
+
 
 
 class BoxAtlasState(object):
@@ -71,5 +86,6 @@ class BoxAtlasInput(object):
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])
 
 class Environment(object):
-    def __init__(self, surfaces):
+    def __init__(self, surfaces, free_space):
         self.surfaces = surfaces
+        self.free_space = free_space

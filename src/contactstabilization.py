@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from itertools import islice
+from itertools import islice, chain
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from polynomial import Polynomial
@@ -30,13 +30,15 @@ def piecewise_polynomial_variable(prog, domain, dimension, degree, kind="continu
                           for j in range(len(domain) - 1)])
 
 
-def add_velocity_constraints(prog, q, vmax, dt):
-    ts = q.breaks
-    dim = q(ts[0]).size
+def add_limb_velocity_constraints(prog, qcom, qlimb, vmax, dt):
+    ts = qcom.breaks
+    dim = qcom(ts[0]).size
+    vcom = qcom.derivative()
     for j in range(len(ts) - 2):
+        relative_velocity = 1.0 / dt * (qlimb(ts[j + 1]) - qlimb(ts[j])) - vcom(ts[j])
         for i in range(dim):
-            prog.AddLinearConstraint((q(ts[j + 1])[i] - q(ts[j])[i] - vmax * dt).Expand() <= 0)
-            prog.AddLinearConstraint((-1 * (q(ts[j + 1])[i] - q(ts[j])[i]) - vmax * dt).Expand() <= 0)
+            prog.AddLinearConstraint((relative_velocity[i] - vmax).Expand() <= 0)
+            prog.AddLinearConstraint((-relative_velocity[i] - vmax).Expand() <= 0)
 
 
 def add_dynamics_constraints(prog, robot, qcom, contact_force):
@@ -148,21 +150,16 @@ def contact_stabilize(initial_state, env):
         add_contact_surface_constraints(prog, qlimb[k], env.surfaces[k], contact[k], Mq)
         add_contact_force_constraints(prog, contact_force[k], env.surfaces[k], contact[k], Mf)
         add_contact_velocity_constraints(prog, qlimb[k], contact[k], Mv)
-        add_velocity_constraints(prog, qlimb[k], vlimb_max, dt)
+        add_limb_velocity_constraints(prog, qcom, qlimb[k], vlimb_max, dt)
         add_kinematic_constraints(prog, qlimb[k], qcom, robot.limb_bounds[k])
 
-    # TODO: hard-coded free space
-    for t in ts[:-1]:
-        prog.AddLinearConstraint(qcom(t)[0] <= 1)
-        prog.AddLinearConstraint(qcom(t)[0] >= -1)
-        prog.AddLinearConstraint(qcom(t)[1] <= 2)
-        prog.AddLinearConstraint(qcom(t)[1] >= 0)
 
-        for k in range(num_limbs):
-            prog.AddLinearConstraint(qlimb[k](t)[0] <= 1)
-            prog.AddLinearConstraint(qlimb[k](t)[0] >= -1)
-            prog.AddLinearConstraint(qlimb[k](t)[1] <= 2)
-            prog.AddLinearConstraint(qlimb[k](t)[1] >= 0)
+    A = env.free_space.getA()
+    b = env.free_space.getB()
+    for q in chain(qcom.at_all_breaks(), *[ql.at_all_breaks() for ql in qlimb]):
+        for i in range(A.shape[0]):
+            prog.AddLinearConstraint((A[i, :].dot(q) - b[i]).Expand() <= 0)
+
 
     add_dynamics_constraints(prog, robot, qcom, contact_force)
 
