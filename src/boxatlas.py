@@ -30,8 +30,20 @@ class BoxAtlas(object):
 
 
 def draw(vis, state, atlasinput):
-    state.draw(vis)
-    atlasinput.draw(vis)
+    vis["body"].setgeometry(vc.Box(lengths=[0.1, 0.1, 0.1]))
+    vis["body"].settransform(vc.transformations.translation_matrix([state.qcom[0], 0, state.qcom[1]]))
+    for (i, q) in enumerate(state.qlimb):
+        limb_vis = vis["limb_{:d}".format(i)]
+        origin = np.array([q[0], 0, q[1]])
+        limb_vis.settransform(vc.transformations.translation_matrix(origin))
+
+        v = limb_vis["position"]
+        v.setgeometry(vc.Sphere(radius=0.05))
+
+        v = limb_vis["force"]
+        force = np.array([atlasinput.flimb[i][0], 0, atlasinput.flimb[i][1]])
+        v.setgeometry(vc.PolyLine(points=[[0, 0, 0], list(0.01 * force)], end_head=True))
+
 
 class BoxAtlasState(object):
     def __init__(self, robot, qcom=None, vcom=None, qlimb=None):
@@ -47,14 +59,6 @@ class BoxAtlasState(object):
         self.vcom = vcom
         self.qlimb = qlimb
 
-    def draw(self, vis):
-        vis["body"].setgeometry(vc.Box(lengths=[0.1, 0.1, 0.1]))
-        vis["body"].settransform(vc.transformations.translation_matrix([self.qcom[0], 0, self.qcom[1]]))
-        for (i, q) in enumerate(self.qlimb):
-            v = vis["limb_{:d}".format(i)]
-            v.setgeometry(vc.Sphere(radius=0.05))
-            v.settransform(vc.transformations.translation_matrix([q[0], 0, q[1]]))
-
 
 class BoxAtlasInput(object):
     def __init__(self, robot, flimb=None):
@@ -62,12 +66,6 @@ class BoxAtlasInput(object):
         if flimb is None:
             flimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
         self.flimb = flimb
-
-    def draw(self, vis):
-        for (i, q) in enumerate(self.qlimb):
-            v = vis["limb_{:d}_force".format(i)]
-            v.setgeometry(vc.Sphere(radius=0.05))
-            v.settransform(vc.transformations.translation_matrix([q[0], 0, q[1]]))
 
 
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])

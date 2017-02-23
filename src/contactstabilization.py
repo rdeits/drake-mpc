@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+from itertools import islice
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from polynomial import Polynomial
@@ -57,6 +58,7 @@ def add_no_force_at_distance_constraints(prog, contact, contact_force, Mbig):
     for t in ts[:-1]:
         for i in range(dim):
             prog.AddLinearConstraint((contact_force(t)[i] - (Mbig * contact(t)[0])).Expand() <= 0)
+            prog.AddLinearConstraint((-contact_force(t)[i] - (Mbig * contact(t)[0])).Expand() <= 0)
 
 
 def add_contact_surface_constraints(prog, qlimb, surface, contact, Mbig):
@@ -78,9 +80,44 @@ def add_contact_force_constraints(prog, contact_force, surface, contact, Mbig):
         for i in range(A.shape[0]):
             prog.AddLinearConstraint((A[i, :].dot(contact_force(t)) - (b[i] + Mbig * (1 - contact(t)[0]))).Expand() <= 0)
 
+def add_contact_velocity_constraints(prog, qlimb, contact, Mbig):
+    ts = qlimb.breaks
+    dim = qlimb(0).size
+    for j in range(len(ts) - 1):
+        t = ts[j]
+        indicator = contact(t)[0]
+        if j < len(ts) - 3:
+            for i in range(dim):
+                prog.AddLinearConstraint(((qlimb(ts[j + 1])[i] - qlimb(ts[j + 2])[i]) - (Mbig * (1 - indicator))).Expand() <= 0)
+                prog.AddLinearConstraint((-(qlimb(ts[j + 1])[i] - qlimb(ts[j + 2])[i]) - (Mbig * (1 - indicator))).Expand() <= 0)
+
 
 def get_piecewise_solution(prog, piecewise):
     return piecewise.map(lambda p: p.map(lambda x: prog.GetSolution(x)))
+
+
+def extract_solution(prog, robot, qcom, qlimb, contact, contact_force):
+    qcom = get_piecewise_solution(prog, qcom)
+    vcom = qcom.map(Polynomial.derivative)
+    qlimb = [get_piecewise_solution(prog, q) for q in qlimb]
+    flimb = [get_piecewise_solution(prog, f) for f in contact_force]
+    contact = [get_piecewise_solution(prog, c) for c in contact]
+    return (Trajectory(
+        [qcom, vcom] + qlimb,
+        lambda qcom, vcom, *qlimb: BoxAtlasState(robot, qcom=qcom, vcom=vcom, qlimb=qlimb)
+    ), Trajectory(
+        flimb,
+        lambda *flimb: BoxAtlasInput(robot, flimb=flimb)
+    ), contact)
+
+
+def add_kinematic_constraints(prog, qlimb, qcom, polytope):
+    A = polytope.getA()
+    b = polytope.getB()
+    for (ql, qc) in islice(zip(qlimb.at_all_breaks(), qcom.at_all_breaks()), 1, None):
+        offset = ql - qc
+        for i in range(A.shape[0]):
+            prog.AddLinearConstraint((A[i, :].dot(offset) - b[i]).Expand() <= 0)
 
 
 def contact_stabilize(initial_state, env):
@@ -101,7 +138,6 @@ def contact_stabilize(initial_state, env):
     add_continuity_constraints(prog, qcom)
     vcom = qcom.derivative()
     add_continuity_constraints(prog, vcom)
-    acom = qcom.derivative()
 
     qlimb = [piecewise_polynomial_variable(prog, ts, dim, 0) for k in range(num_limbs)]
     contact_force = [piecewise_polynomial_variable(prog, ts, dim, 0) for k in range(num_limbs)]
@@ -111,27 +147,22 @@ def contact_stabilize(initial_state, env):
         add_no_force_at_distance_constraints(prog, contact[k], contact_force[k], Mf)
         add_contact_surface_constraints(prog, qlimb[k], env.surfaces[k], contact[k], Mq)
         add_contact_force_constraints(prog, contact_force[k], env.surfaces[k], contact[k], Mf)
-
-        for j in range(len(ts) - 1):
-            t = ts[j]
-            indicator = contact[k](t)[0]
-            if j < len(ts) - 3:
-                for i in range(dim):
-                    prog.AddLinearConstraint(((qlimb[k](ts[j + 1])[i] - qlimb[k](ts[j + 2])[i]) - (Mv * (1 - indicator))).Expand() <= 0)
-                    prog.AddLinearConstraint((-1 * (qlimb[k](ts[j + 1])[i] - qlimb[k](ts[j + 2])[i]) - (Mv * (1 - indicator))).Expand() <= 0)
-
-    for k in range(num_limbs):
+        add_contact_velocity_constraints(prog, qlimb[k], contact[k], Mv)
         add_velocity_constraints(prog, qlimb[k], vlimb_max, dt)
+        add_kinematic_constraints(prog, qlimb[k], qcom, robot.limb_bounds[k])
 
     # TODO: hard-coded free space
     for t in ts[:-1]:
-        for i in range(dim):
-            prog.AddLinearConstraint(qcom(t)[i] <= 1)
-            prog.AddLinearConstraint(qcom(t)[i] >= -1)
+        prog.AddLinearConstraint(qcom(t)[0] <= 1)
+        prog.AddLinearConstraint(qcom(t)[0] >= -1)
+        prog.AddLinearConstraint(qcom(t)[1] <= 2)
+        prog.AddLinearConstraint(qcom(t)[1] >= 0)
 
-            for k in range(num_limbs):
-                prog.AddLinearConstraint(qlimb[k](t)[i] <= 1)
-                prog.AddLinearConstraint(qlimb[k](t)[i] >= -1)
+        for k in range(num_limbs):
+            prog.AddLinearConstraint(qlimb[k](t)[0] <= 1)
+            prog.AddLinearConstraint(qlimb[k](t)[0] >= -1)
+            prog.AddLinearConstraint(qlimb[k](t)[1] <= 2)
+            prog.AddLinearConstraint(qlimb[k](t)[1] >= 0)
 
     add_dynamics_constraints(prog, robot, qcom, contact_force)
 
@@ -141,39 +172,16 @@ def contact_stabilize(initial_state, env):
         for k in range(num_limbs):
             prog.AddLinearConstraint(qlimb[k](ts[0])[i] == initial_state.qlimb[k][i])
 
-    for t in ts[1:]:
-        for (k, polytope) in enumerate(robot.limb_bounds):
-            A = polytope.getA()
-            b = polytope.getB()
-            offset = qlimb[k].from_below(t) - qcom.from_below(t)
-            for i in range(A.shape[0]):
-                prog.AddLinearConstraint((A[i, :].dot(offset) - b[i]).Expand() <= 0)
-
-    all_force_vars = np.hstack([contact_force[k](t) for t in ts[:-1] for k in range(num_limbs)])
-    print(all_force_vars.shape)
-    prog.AddQuadraticCost(0.01 * np.eye(len(all_force_vars)),
-                          np.zeros(len(all_force_vars)),
-                          all_force_vars)
-    all_qcom_vars = np.hstack([p[0] for p in qcom.functions])
-    print(all_qcom_vars.shape)
-    prog.AddQuadraticCost(0.01 * np.eye(len(all_qcom_vars)),
-                          np.zeros(len(all_qcom_vars)),
-                          all_qcom_vars)
+    prog.AddQuadraticCost(0.001 * np.sum(np.sum(np.power(contact_force[k](t), 2)) for t in ts[:-1] for k in range(num_limbs)))
+    prog.AddQuadraticCost(100 * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in qcom.at_all_breaks()))
+    cost = qcom.from_below(ts[-1])
+    prog.AddQuadraticCost(1000 * np.sum(np.power(cost - np.array([0, 1]), 2)).Expand())
+    prog.AddQuadraticCost(100 * np.sum(10 * np.power(vcom.from_below(ts[-1]) - np.array([0, 0]), 2)))
 
 
     result = prog.Solve()
     print(result)
     assert result == mp.SolutionResult.kSolutionFound
 
-    qcom = get_piecewise_solution(prog, qcom)
-    vcom = qcom.map(Polynomial.derivative)
-    qlimb = [get_piecewise_solution(prog, qlimb[k]) for k in range(num_limbs)]
-    flimb = [get_piecewise_solution(prog, contact_force[k]) for k in range(num_limbs)]
-    contact = [get_piecewise_solution(prog, contact[k]) for k in range(num_limbs)]
-    return (Trajectory(
-        [qcom, vcom] + qlimb,
-        lambda qcom, vcom, *qlimb: BoxAtlasState(robot, qcom=qcom, vcom=vcom, qlimb=qlimb)
-    ), Trajectory(
-        flimb,
-        lambda *flimb: BoxAtlasInput(robot, flimb=flimb)
-    ), contact)
+    return extract_solution(prog, robot, qcom, qlimb, contact, contact_force)
+

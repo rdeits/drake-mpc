@@ -35,6 +35,11 @@ class Piecewise(object):
     def derivative(self, *args, **kwargs):
         return self.map(lambda f: f.derivative(*args, **kwargs))
 
+    def at_all_breaks(self):
+        for t in self.breaks[:-1]:
+            yield self.from_above(t)
+        yield self.from_below(self.breaks[-1])
+
 
 class TestPiecewise(unittest.TestCase):
     def test_from_above(self):
@@ -58,6 +63,7 @@ class TestPiecewise(unittest.TestCase):
         self.assertEqual(p.from_below(2), 1)
         self.assertEqual(p.from_below(2.5), 2)
         self.assertEqual(p.from_below(3), 2)
+        self.assertEqual(list(p.at_all_breaks()), [1, 2, 2])
 
     def test_map(self):
         p = Piecewise([1, 2, 3],
