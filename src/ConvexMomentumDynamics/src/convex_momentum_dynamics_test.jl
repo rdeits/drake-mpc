@@ -1,8 +1,9 @@
 include("ConvexMomentumDynamics.jl")
-using ConvexMomentumDynamics
+import ConvexMomentumDynamics
+CVM = ConvexMomentumDynamics
 
 com_position = [0.,0.,1.]
-draw_com(com_position)
+CVM.draw_com(com_position)
 
 com_position = [0.,0.,1.]
 num_contacts = 2
@@ -15,12 +16,12 @@ contact_forces = similar(contact_location_test)
 contact_forces[:,1] = [0,0,0.5]
 contact_forces[:,2] = [0,0,0.5]
 
-state = CentroidalDynamicsState(com_position, contact_location_test, contact_forces)
+state = CVM.CentroidalDynamicsState(com_position, contact_location_test, contact_forces)
 display(state.com_position)
 # draw_centroidal_dynamics_state(state)
 
 
-draw_centroidal_dynamics_state(state)
+CVM.draw_centroidal_dynamics_state(state)
 
 contact_names = ["left_foot", "right_foot"]
 num_contacts = length(contact_names)
