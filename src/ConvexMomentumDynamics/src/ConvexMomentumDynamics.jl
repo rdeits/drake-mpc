@@ -1,5 +1,6 @@
 module ConvexMomentumDynamics
 
+# imports
 using JuMP
 using Gurobi
 using AxisArrays
@@ -10,7 +11,8 @@ using Interact, Reactive
 import GeometryTypes: HyperRectangle, Vec, HomogenousMesh, Point
 import ColorTypes: RGBA
 
-
+## optimization.jl
+# types
 export CentroidalDynamicsState
 export CentroidalDynamicsOptimizationProblem
 export ContactPoint
@@ -18,15 +20,23 @@ export OptimizationParameters
 export OptimizationWeights
 export OptimizationInitialConditions
 export OptimizationVariables
-export CentroidalDynamicsVisualizer
-export CentroidalDynamicsVisualizerOptions
 
+# functions
 export add_variables!
 export add_contact_points!
 export add_dynamics_constraints!
 export add_costs!
 export add_initial_condition_constraints!
 export get_variable_solution_values
+export difference_convex_functions_decomposition
+export construct_default_problem
+
+## visualization.jl
+# types
+export CentroidalDynamicsVisualizer
+export CentroidalDynamicsVisualizerOptions
+
+# functions
 export get_centroidal_dynamics_state
 export draw_centroidal_dynamics_state
 export playback_trajectory

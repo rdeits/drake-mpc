@@ -263,3 +263,40 @@ function get_variable_solution_values(vars::OptimizationVariables)
 
   return soln
 end
+
+function difference_convex_functions_decomposition(p::CentroidalDynamicsOptimizationProblem, soln::OptimizationVariables{Float64})
+
+  const num_contacts = length(p.contact_points)
+  const num_timesteps = p.param.num_timesteps
+  pos_convex = 0*similar(vars.l_cross_f_plus)
+  neg_convex = 0*similar(vars.l_cross_f_plus)
+
+  for i=1:num_timesteps
+    for contact_idx=1:num_contacts
+      contact_location = p.contact_points[contact_idx].location
+
+      # vector from com --> contact location
+      l = contact_location .- vars.com_position[:,i]
+      force_local = vars.forces[:,i,contact_idx]
+
+      # decompose into difference of convex functions
+      pos_convex[:,i,contact_idx], neg_convex[:,i,contact_idx] = difference_convex_functions_decomposition(l, force_local)
+    end
+  end
+
+  return pos_convex, neg_convex
+end
+
+function construct_default_problem()
+  param = OptimizationParameters()
+  model = Model(solver=GurobiSolver(Presolve=0))
+  p = CentroidalDynamicsOptimizationProblem(model=model, param=param)
+  weights = OptimizationWeights()
+
+  contact_points = Vector{ContactPoint}()
+  push!(contact_points, ContactPoint("l_foot",[-0.5,0,0]))
+  push!(contact_points, ContactPoint("r_foot",[0.5,0,0]))
+
+  initial_conditions = OptimizationInitialConditions()
+  return p, weights, contact_points, initial_conditions
+end
