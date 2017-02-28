@@ -59,6 +59,6 @@ macro axis_variables(m, var, axes...)
 end
 
 include("optimization.jl")
-include("visualizer.jl")
+include("visualization.jl")
 
 end
