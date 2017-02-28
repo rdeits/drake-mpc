@@ -6,3 +6,4 @@ using DrakeVisualizer
 using Base.Test
 
 include("optimization.jl")
+include("visualization.jl")

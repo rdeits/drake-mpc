@@ -40,7 +40,7 @@ end
   add_costs!(p, weights)
 end
 
-@testset "run_optimization!" begin
+@testset "run_optimization" begin
   p, weights, contact_points, initial_conditions = construct_default_problem()
   add_contact_points!(p, contact_points)
   add_variables!(p)
@@ -50,4 +50,17 @@ end
 
   # solve the model
   status = solve(p.model)
+end
+
+@testset "get_variable_solution_values" begin
+  p, weights, contact_points, initial_conditions = construct_default_problem()
+  add_contact_points!(p, contact_points)
+  add_variables!(p)
+  add_dynamics_constraints!(p)
+  add_initial_condition_constraints!(p, initial_conditions)
+  add_costs!(p, weights)
+
+  # solve the model
+  status = solve(p.model)
+  soln = get_variable_solution_values(p.vars)
 end
