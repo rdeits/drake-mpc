@@ -13,12 +13,23 @@ import ColorTypes: RGBA
 
 export CentroidalDynamicsState
 export CentroidalDynamicsOptimizationProblem
+export ContactPoint
 export OptimizationParameters
+export OptimizationWeights
+export OptimizationInitialConditions
+export OptimizationVariables
+export CentroidalDynamicsVisualizer
+export CentroidalDynamicsVisualizerOptions
+
 export add_variables!
 export add_contact_points!
 export add_dynamics_constraints!
-export ContactPoint
-
+export add_costs!
+export add_initial_condition_constraints!
+export get_variable_solution_values
+export get_centroidal_dynamics_state
+export draw_centroidal_dynamics_state
+export playback_trajectory
 
 # developed by Twan
 # a more convenient method of using JuMP Variables than JuMP Arrays

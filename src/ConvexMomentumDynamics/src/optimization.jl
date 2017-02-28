@@ -11,26 +11,66 @@ end
   gravity::Vector{Float64} = [0.,0.,-9.8] # change this if you change the dimension
 end
 
-# @with_kw type OptimizationWeights
-#
-# end
+@with_kw type OptimizationWeights
+  com_final_position::Vector{Float64} = [0.,0.,1.]
+  com_final_position_weight::Float64 = 100.
+  lin_momentum::Float64 = 0.5
+  forces::Float64 = 0.001
+  convex_bounds::Float64 = 1e-6
+end
+
+@with_kw type OptimizationInitialConditions
+  com_position::Vector{Float64} = [0.,0.,1.]
+  lin_momentum::Vector{Float64} = zeros(3)
+  ang_momentum::Vector{Float64} = zeros(3)
+end
+
+@with_kw type OptimizationVariables{T}
+  # variables
+  com_position::Array{T} = Array{T}()
+  forces::Array{T} = Array{T}()
+  torques::Array{T} = Array{T}()
+  lin_momentum::Array{T} = Array{T}()
+  lin_momentum_dot::Array{T} = Array{T}()
+  ang_momentum::Array{T} = Array{T}()
+  ang_momentum_dot::Array{T} = Array{T}()
+  l_cross_f_plus::Array{T} = Array{T}()
+  l_cross_f_minus::Array{T} = Array{T}()
+end
 
 # store the optimization problem
 @with_kw type CentroidalDynamicsOptimizationProblem
   model::JuMP.Model
   param::OptimizationParameters = OptimizationParameters()
   contact_points::Vector{ContactPoint} = Vector{ContactPoint}()
+  vars::OptimizationVariables{JuMP.Variable} = OptimizationVariables{JuMP.Variable}()
+end
 
-  # variables
-  com_position::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  forces::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  torques::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  lin_momentum::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  lin_momentum_dot::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  ang_momentum::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  ang_momentum_dot::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  l_cross_f_plus::Array{JuMP.Variable} = Array{JuMP.Variable}()
-  l_cross_f_minus::Array{JuMP.Variable} = Array{JuMP.Variable}()
+type OptimizationSolution
+  com_position::Array{Float64}
+  forces::Array{Float64}
+  torques::Array{Float64}
+  lin_momentum::Array{Float64}
+  lin_momentum_dot::Array{Float64}
+  ang_momentum::Array{Float64}
+  ang_momentum_dot::Array{Float64}
+  l_cross_f_plus::Array{Float64}
+  l_cross_f_minus::Array{Float64}
+
+  # parse the solution from a CentroidalDynamicsOptimizationProblem
+  function OptimizationSolution(p::CentroidalDynamicsOptimizationProblem)
+    var_list = [:com_position, :forces, :torques, :lin_momentum,
+    :lin_momentum_dot, :ang_momentum_dot, :l_cross_f_plus, :l_cross_f_minus]
+    soln = new() # uninitialized object
+
+    # for each variable get the JuMP.Variable array from p.
+    # get the value and then set it to the correct field
+    for var_symbol in var_list
+      var_value = getvalue(getfield(p,var_symbol))
+      setfield!(soln, var_symbol, var_value)
+    end
+    return soln
+  end
 end
 
 # returns the square of the L2 norm of a vector
@@ -73,32 +113,32 @@ function add_variables!(p::CentroidalDynamicsOptimizationProblem)
 
 
   # com position
-  p.com_position = @variable(p.model, [1:dimension, 1:num_knot_points])
+  p.vars.com_position = @variable(p.model, [1:dimension, 1:num_knot_points])
 
   # linear momentum
-  p.lin_momentum = @variable(p.model, [1:dimension, 1:num_knot_points])
+  p.vars.lin_momentum = @variable(p.model, [1:dimension, 1:num_knot_points])
 
   # angular momentum
-  p.ang_momentum = @variable(p.model, [1:dimension, 1:num_knot_points])
+  p.vars.ang_momentum = @variable(p.model, [1:dimension, 1:num_knot_points])
 
   # linear momentum dot
-  p.lin_momentum_dot = @variable(p.model, [1:dimension, 1:num_knot_points])
+  p.vars.lin_momentum_dot = @variable(p.model, [1:dimension, 1:num_knot_points])
 
   # angular momentum dot
-  p.ang_momentum_dot = @variable(p.model, [1:dimension, 1:num_knot_points])
+  p.vars.ang_momentum_dot = @variable(p.model, [1:dimension, 1:num_knot_points])
 
   # contact force variables
-  p.forces = @variable(p.model, [1:3, 1:num_timesteps, 1:num_contacts], lowerbound = 0)
+  p.vars.forces = @variable(p.model, [1:3, 1:num_timesteps, 1:num_contacts], lowerbound = 0)
 
   # contact torque variables
   # clamp them to zero for the moment
-  p.torques = @variable(p.model, [1:3, 1:num_timesteps, 1:num_contacts], lowerbound = 0,
+  p.vars.torques = @variable(p.model, [1:3, 1:num_timesteps, 1:num_contacts], lowerbound = 0,
   upperbound = 0)
 
   # bounding variables for l x f terms
-  p.l_cross_f_plus = @variable(p.model, [1:dimension, 1:num_timesteps, 1:num_contacts],
+  p.vars.l_cross_f_plus = @variable(p.model, [1:dimension, 1:num_timesteps, 1:num_contacts],
   lowerbound = 0)
-  p.l_cross_f_minus = @variable(p.model, [1:dimension, 1:num_timesteps, 1:num_contacts],
+  p.vars.l_cross_f_minus = @variable(p.model, [1:dimension, 1:num_timesteps, 1:num_contacts],
   lowerbound = 0)
 end
 
@@ -111,20 +151,20 @@ function add_linear_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiza
 
   for i=1:num_timesteps
       # com position integration constraint
-      @constraint(p.model, p.com_position[:,i+1] .- (p.com_position[:,i] .+
-          dt/robot_mass.*p.lin_momentum[:,i]) .== 0)
+      @constraint(p.model, p.vars.com_position[:,i+1] .- (p.vars.com_position[:,i] .+
+          dt/robot_mass.*p.vars.lin_momentum[:,i]) .== 0)
 
       # linear momentum integration constraint
-      @constraint(p.model, p.lin_momentum[:,i+1] .- (p.lin_momentum[:,i]
-              + p.lin_momentum_dot[:,i]*dt) .== 0)
+      @constraint(p.model, p.vars.lin_momentum[:,i+1] .- (p.vars.lin_momentum[:,i]
+              + p.vars.lin_momentum_dot[:,i]*dt) .== 0)
 
       total_force = zero(AffExpr) # total force
       for contact_idx =1:num_contacts
-          total_force += p.forces[:,i,contact_idx]
+          total_force += p.vars.forces[:,i,contact_idx]
       end
 
       # F = ma
-      @constraint(p.model, p.lin_momentum_dot[:,i] - (robot_mass*gravity .+ total_force) .== 0)
+      @constraint(p.model, p.vars.lin_momentum_dot[:,i] - (robot_mass*gravity .+ total_force) .== 0)
     end
 end
 
@@ -136,12 +176,12 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
 
   for i=1:num_timesteps
       # angular momentum Euler integration constraint
-      @constraint(p.model, p.ang_momentum[:, i+1] .- (p.ang_momentum[:,i]
-              .+ p.ang_momentum_dot[:,i] * dt) .== 0)
+      @constraint(p.model, p.vars.ang_momentum[:, i+1] .- (p.vars.ang_momentum[:,i]
+              .+ p.vars.ang_momentum_dot[:,i] * dt) .== 0)
 
       total_torque = zero(AffExpr) # total torque
       for contact_idx =1:num_contacts
-          total_torque += p.torques[:,i,contact_idx]
+          total_torque += p.vars.torques[:,i,contact_idx]
       end
 
 
@@ -152,26 +192,74 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
           contact_location = p.contact_points[contact_idx].location
 
           # vector from com --> contact location
-          l = contact_location .- p.com_position[:,i]
-          force_local = p.forces[:,i,contact_idx]
+          l = contact_location .- p.vars.com_position[:,i]
+          force_local = p.vars.forces[:,i,contact_idx]
 
           # decompose into difference of convex functions
           pos_convex,neg_convex = difference_convex_functions_decomposition(l, force_local)
 
           # add constraint for convex relaxation
-          @constraint(p.model, pos_convex .<= p.l_cross_f_plus[:,i,contact_idx])
-          @constraint(p.model, neg_convex .<= p.l_cross_f_minus[:,i,contact_idx])
+          @constraint(p.model, pos_convex .<= p.vars.l_cross_f_plus[:,i,contact_idx])
+          @constraint(p.model, neg_convex .<= p.vars.l_cross_f_minus[:,i,contact_idx])
 
           # add the contribution of this contact to the overall l x f term.
-          l_cross_f += p.l_cross_f_plus[:,i,contact_idx] - p.l_cross_f_minus[:,i,contact_idx]
+          l_cross_f += p.vars.l_cross_f_plus[:,i,contact_idx] - p.vars.l_cross_f_minus[:,i,contact_idx]
       end
 
       # angular momentum dot constraint
-      @constraint(p.model, p.ang_momentum_dot[:,i] .- (l_cross_f .+ total_torque) .== 0)
+      @constraint(p.model, p.vars.ang_momentum_dot[:,i] .- (l_cross_f .+ total_torque) .== 0)
   end
 end
 
 function add_dynamics_constraints!(p::CentroidalDynamicsOptimizationProblem)
   add_linear_momentum_dynamics_constraints!(p)
   add_angular_momentum_dynamics_constraints!(p)
+end
+
+function add_initial_condition_constraints!(p::CentroidalDynamicsOptimizationProblem, x0::OptimizationInitialConditions)
+  # initial condition constraints
+  @constraint(p.model, p.vars.com_position[:,1] .== x0.com_position)
+  @constraint(p.model, p.vars.lin_momentum[:,1] .== x0.lin_momentum)
+  @constraint(p.model, p.vars.ang_momentum[:,1] .== x0.ang_momentum)
+end
+
+function add_costs!(p::CentroidalDynamicsOptimizationProblem, weights::OptimizationWeights)
+  total_cost = get_running_cost(p,weights) + get_final_cost(p,weights)
+  @objective(p.model, :Min, total_cost)
+end
+
+function get_final_cost(p::CentroidalDynamicsOptimizationProblem, weights::OptimizationWeights)
+  com_final_position_cost = weights.com_final_position_weight*
+  l2_norm(p.vars.com_position[:,end] - weights.com_final_position)
+  return com_final_position_cost
+end
+
+function get_running_cost(p::CentroidalDynamicsOptimizationProblem, weights::OptimizationWeights)
+  const num_contacts = length(p.contact_points)
+
+  lin_momentum_cost = weights.lin_momentum*l2_norm(p.vars.lin_momentum[:,:,:])
+  force_cost = zero(QuadExpr)
+  convex_bound_cost = zero(QuadExpr)
+  for contact_idx=1:num_contacts
+      force_cost += weights.forces*l2_norm(p.vars.forces[:,:,contact_idx])
+      convex_bound_cost += weights.convex_bounds*l2_norm(p.vars.l_cross_f_plus[:,:,contact_idx])
+      convex_bound_cost += weights.convex_bounds*l2_norm(p.vars.l_cross_f_minus[:,:,contact_idx])
+  end
+
+  total_cost = lin_momentum_cost + force_cost + convex_bound_cost
+  return total_cost
+end
+
+function get_variable_solution_values(vars::OptimizationVariables)
+  """
+  Parses model solution, essentially calls getvalue on each variable in
+  our optimization problem
+  """
+  soln = OptimizationVariables{Float64}()
+
+  for var_symbol in fieldnames(vars)
+    setfield!(soln, var_symbol, getvalue(getfield(vars, var_symbol)))
+  end
+
+  return soln
 end
