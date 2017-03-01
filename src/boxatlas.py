@@ -30,7 +30,7 @@ class BoxAtlas(object):
 
 
 def draw(vis, state, atlasinput=None, env=None):
-    vis["body"].setgeometry(vc.Box(lengths=[0.1, 0.1, 0.1]))
+    vis["body"].setgeometry(vc.GeometryData(vc.Box(lengths=[0.25, 0.1, .5]), color=[0.8, 0.4, 0.4, 0.8]))
     vis["body"].settransform(vc.transformations.translation_matrix([state.qcom[0], 0, state.qcom[1]]))
     for (i, q) in enumerate(state.qlimb):
         limb_vis = vis["limb_{:d}".format(i)]
