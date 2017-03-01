@@ -7,6 +7,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import irispy as iris
 import itertools as it
+import mpl_toolkits.mplot3d as a3
+import time
+
 
 def plot_input_sequence(u_sequence, t_s, N, u_max=None, u_min=None):
     """
@@ -255,7 +258,7 @@ class Polyhedron:
             facet_centers.append(np.mean(np.vstack(vertices), axis=0))
         self.facet_centers = facet_centers
 
-    def plot(self, line_style='b', dim_proj=[0,1]):
+    def plot(self, dim_proj=[0,1], **kwargs):
         """
         plots a 2d projection of the polyhedron
         INPUTS:
@@ -268,14 +271,40 @@ class Polyhedron:
             raise ValueError('Empty polyhedron!')
         if len(dim_proj) != 2:
             raise ValueError('Only 2d polyhedrons!')
-        # extract vertices coponents
+        # extract vertices components
         vertices_proj = np.vstack(self.vertices)[:,dim_proj]
         hull = spat.ConvexHull(vertices_proj)
-        for simp in hull.simplices:
-            polyhedron_plot, = plt.plot(vertices_proj[simp, 0], vertices_proj[simp, 1], line_style)
+        for simplex in hull.simplices:
+            polyhedron_plot, = plt.plot(vertices_proj[simplex, 0], vertices_proj[simplex, 1], **kwargs)
         plt.xlabel(r'$x_' + str(dim_proj[0]+1) + '$')
         plt.ylabel(r'$x_' + str(dim_proj[1]+1) + '$')
         return polyhedron_plot
+
+    # def plot3d(self, dim_proj=[0,1,2], **kwargs):
+    #     """
+    #     plots a 3d projection of the polyhedron
+    #     INPUTS:
+    #     line_style -> line style
+    #     dim_proj -> dimensions in which to project the polyhedron
+    #     OUTPUTS:
+    #     polyhedron_plot -> figure handle
+    #     """
+    #     if self.empty:
+    #         raise ValueError('Empty polyhedron!')
+    #     if len(dim_proj) != 3:
+    #         raise ValueError('Only 3d polyhedrons!')
+    #     # extract vertices components
+    #     vertices_proj = np.vstack(self.vertices)[:,dim_proj]
+    #     hull = spat.ConvexHull(vertices_proj)
+    #     ax = a3.Axes3D(plt.gcf())
+    #     for simplex in hull.simplices:
+    #         poly = a3.art3d.Poly3DCollection([vertices_proj[simplex]], **kwargs)
+    #         poly.set_edgecolor('k')
+    #         ax.add_collection3d(poly)
+    #     plt.xlabel(r'$x_' + str(dim_proj[0]+1) + '$')
+    #     plt.ylabel(r'$x_' + str(dim_proj[1]+1) + '$')
+    #     plt.zlabel(r'$x_' + str(dim_proj[2]+1) + '$')
+    #     return
 
     @staticmethod
     def from_bounds(x_max, x_min):
@@ -491,6 +520,7 @@ class MPCController:
         return u_feedback
 
     def compute_explicit_solution(self):
+        tic = time.clock()
         # change variable for exeplicit MPC (z := u_seq + H^-1 F^T x0)
         H_inv = np.linalg.inv(self.H)
         self.S = self.E + self.G.dot(H_inv.dot(self.F.T))
@@ -529,7 +559,8 @@ class MPCController:
                                 else:
                                     print('    unfeasible region detected')
         self.critical_regions = explored_cr
-        print('\nExplicit solution successfully computed:')
+        toc = time.clock()
+        print('\nExplicit solution successfully computed in ' + str(toc-tic) + ' s:')
         print('parameter space partitioned in ' + str(len(self.critical_regions)) + ' critical regions.')
 
     def evaluate_explicit_solution(self, x):
@@ -768,3 +799,30 @@ def licq_check(G, active_set, max_cond=1e9):
     if cond > max_cond:
         licq = False
     return licq
+
+
+
+
+def plot3d(poly, dim_proj=[0,1,2], **kwargs):
+    """
+    plots a 3d projection of the polyhedron
+    INPUTS:
+    line_style -> line style
+    dim_proj -> dimensions in which to project the polyhedron
+    OUTPUTS:
+    polyhedron_plot -> figure handle
+    """
+    if poly.empty:
+        raise ValueError('Empty polyhedron!')
+    if len(dim_proj) != 3:
+        raise ValueError('Only 3d polyhedrons!')
+    # extract vertices coponents
+    vertices_proj = np.vstack(poly.vertices)[:,dim_proj]
+    hull = spat.ConvexHull(vertices_proj)
+    ax = a3.Axes3D(plt.gcf())
+    for simplex in hull.simplices:
+        polyhedron_plot = a3.art3d.Poly3DCollection([vertices_proj[simplex]], **kwargs)
+        polyhedron_plot.set_edgecolor('k')
+        ax.add_collection3d(polyhedron_plot)
+
+    return
