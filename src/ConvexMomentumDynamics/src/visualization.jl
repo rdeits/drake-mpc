@@ -7,6 +7,7 @@ end
   p::CentroidalDynamicsOptimizationProblem
   vis::DrakeVisualizer.Visualizer = DrakeVisualizer.Visualizer()
   soln::OptimizationVariables{Float64}
+  debug::OptimizationDebugValues
   options::CentroidalDynamicsVisualizerOptions = CentroidalDynamicsVisualizerOptions()
 end
 
@@ -42,7 +43,6 @@ function draw_centroidal_dynamics_state(vis::DrakeVisualizer.Visualizer, state::
   Draws com location and contact forces
   """
   draw_com(vis, state.com_position)
-
   for i=1:length(state.contact_points)
     draw_contact_force(vis, state.contact_points[i], state.contact_forces[i], options)
   end
@@ -51,7 +51,9 @@ end
 function draw_centroidal_dynamics_state(cd_vis::CentroidalDynamicsVisualizer, knot_point)
   state = get_centroidal_dynamics_state(cd_vis.p, cd_vis.soln, knot_point)
   draw_centroidal_dynamics_state(cd_vis.vis, state, cd_vis.options)
+  draw_com_frame(cd_vis, knot_point)
 end
+
 
 function draw_contact_force{T}(vis::DrakeVisualizer.Visualizer, contact_point::ContactPoint, contact_force::Vector{T}, options::CentroidalDynamicsVisualizerOptions)
 
@@ -64,9 +66,25 @@ end
 
 function draw_com{T}(vis::DrakeVisualizer.Visualizer, com_position::Vector{T})
   sphere = HyperSphere(make_point(com_position), 0.1)
-  setgeometry!(vis[:com], GeometryData(sphere, RGBA(0, 0, 1, 0.5)))
+  # box = HyperRectangle(Vec(0.,0,0), Vec(0.1,0.1,0.1))
+  setgeometry!(vis[:com][:position], GeometryData(sphere, RGBA(0, 0, 1, 0.5)))
 end
 
+function draw_com_frame(cd_vis::CentroidalDynamicsVisualizer, knot_point::Int)
+  # extract com position/orientation fron soln and debug
+  com_position = cd_vis.soln.com_position[:,knot_point]
+  com_orientation_xyz = cd_vis.debug.orientation[:,knot_point]
+
+  # make the geometry
+  triad = DrakeVisualizer.Triad(0.25, true)
+  # compute the transform
+  translation = Translation(Vec(com_position))
+  rotation =  LinearMap(RotXYZ(com_orientation_xyz...))
+  transform = compose(rotation, translation)
+
+  triad_vis = setgeometry!(cd_vis.vis[:com][:frame], triad)
+  settransform!(triad_vis, transform)
+end
 
 function playback_trajectory(cd_vis::CentroidalDynamicsVisualizer)
   const num_timesteps = cd_vis.p.param.num_timesteps
@@ -75,4 +93,10 @@ function playback_trajectory(cd_vis::CentroidalDynamicsVisualizer)
     draw_centroidal_dynamics_state(cd_vis, knot_point)
     sleep(cd_vis.options.playback_sleep_time)
   end
+end
+
+function slider_playback(cd_vis::CentroidalDynamicsVisualizer)
+    @manipulate for knot_point=1:cd_vis.p.param.num_timesteps
+        draw_centroidal_dynamics_state(cd_vis, knot_point)
+    end
 end

@@ -30,6 +30,7 @@ export add_initial_condition_constraints!
 export get_variable_solution_values
 export difference_convex_functions_decomposition
 export construct_default_problem
+export compute_debug_info
 
 ## visualization.jl
 # types
@@ -40,6 +41,7 @@ export CentroidalDynamicsVisualizerOptions
 export get_centroidal_dynamics_state
 export draw_centroidal_dynamics_state
 export playback_trajectory
+export slider_playback
 
 # developed by Twan
 # a more convenient method of using JuMP Variables than JuMP Arrays

@@ -7,6 +7,7 @@ end
   dimension::Int = 3
   num_timesteps::Int = 1
   robot_mass::Float64 = 1
+  robot_inertia::Float64 = 1 # for debugging, not used in optimization
   dt::Float64 = 0.1
   gravity::Vector{Float64} = [0.,0.,-9.8] # change this if you change the dimension
 end
@@ -16,7 +17,7 @@ end
   com_final_position_weight::Float64 = 100.
   lin_momentum::Float64 = 0.5
   forces::Float64 = 0.001
-  convex_bounds::Float64 = 1e-6
+  convex_bounds::Float64 = 1e-3
 end
 
 @with_kw type OptimizationInitialConditions
@@ -36,6 +37,15 @@ end
   ang_momentum_dot::Array{T} = Array{T}()
   l_cross_f_plus::Array{T} = Array{T}()
   l_cross_f_minus::Array{T} = Array{T}()
+end
+
+@with_kw type OptimizationDebugValues
+  pos_convex::Array{Float64} = Array{Float64}()
+  neg_convex::Array{Float64} = Array{Float64}()
+  l_cross_f::Array{Float64} = Array{Float64}() # torque contribution for each contact point
+  ang_momentum::Array{Float64} = Array{Float64}()
+  ang_momentum_dot::Array{Float64} = Array{Float64}()
+  orientation::Array{Float64} = Array{Float64}()
 end
 
 # store the optimization problem
@@ -73,7 +83,7 @@ type OptimizationSolution
   end
 end
 
-# returns the square of the L2 norm of a vector
+# returns the square of the L2 norm of a vector or matrix
 function l2_norm(x)
   return sum(x.^2)
 end
@@ -95,8 +105,8 @@ function difference_convex_functions_decomposition(l, force)
   # this is the decomposition of the cross product into difference
   # of convex functions
   # these are 3-vectors
-  p = 1/4 * [l2_norm(a+d),l2_norm(b+e),l2_norm(c+f)]
-  q = 1/4 * [l2_norm(a-d),l2_norm(b-e),l2_norm(c-f)]
+  p = 1/4 * [l2_norm(a.+d),l2_norm(b.+e),l2_norm(c.+f)]
+  q = 1/4 * [l2_norm(a.-d),l2_norm(b.-e),l2_norm(c.-f)]
 
   return p,q
 end
@@ -196,9 +206,11 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
           force_local = p.vars.forces[:,i,contact_idx]
 
           # decompose into difference of convex functions
-          pos_convex,neg_convex = difference_convex_functions_decomposition(l, force_local)
+          pos_convex, neg_convex = difference_convex_functions_decomposition(l, force_local)
 
           # add constraint for convex relaxation
+          # this is a quadratic constraint since pos_convex/neg_convex are
+          # quadratic in the decision variables
           @constraint(p.model, pos_convex .<= p.vars.l_cross_f_plus[:,i,contact_idx])
           @constraint(p.model, neg_convex .<= p.vars.l_cross_f_minus[:,i,contact_idx])
 
@@ -268,16 +280,16 @@ function difference_convex_functions_decomposition(p::CentroidalDynamicsOptimiza
 
   const num_contacts = length(p.contact_points)
   const num_timesteps = p.param.num_timesteps
-  pos_convex = 0*similar(vars.l_cross_f_plus)
-  neg_convex = 0*similar(vars.l_cross_f_plus)
+  pos_convex = 0*similar(soln.l_cross_f_plus)
+  neg_convex = 0*similar(soln.l_cross_f_plus)
 
   for i=1:num_timesteps
     for contact_idx=1:num_contacts
       contact_location = p.contact_points[contact_idx].location
 
       # vector from com --> contact location
-      l = contact_location .- vars.com_position[:,i]
-      force_local = vars.forces[:,i,contact_idx]
+      l = contact_location .- soln.com_position[:,i]
+      force_local = soln.forces[:,i,contact_idx]
 
       # decompose into difference of convex functions
       pos_convex[:,i,contact_idx], neg_convex[:,i,contact_idx] = difference_convex_functions_decomposition(l, force_local)
@@ -299,4 +311,54 @@ function construct_default_problem()
 
   initial_conditions = OptimizationInitialConditions()
   return p, weights, contact_points, initial_conditions
+end
+
+
+function compute_debug_info(p::CentroidalDynamicsOptimizationProblem, soln::OptimizationVariables{Float64})
+
+  const num_contacts = length(p.contact_points)
+  const num_timesteps = p.param.num_timesteps
+  const dt = p.param.dt
+  const inertia = p.param.robot_inertia
+
+  pos_convex = zeros(soln.l_cross_f_plus)
+  neg_convex = zeros(soln.l_cross_f_minus)
+  l_cross_f = zeros(soln.l_cross_f_minus)
+  ang_momentum = zeros(soln.ang_momentum)
+  ang_momentum_dot = zeros(soln.ang_momentum_dot)
+  orientation = zeros(soln.ang_momentum)
+
+  # setup initial condition for angular momentum
+  ang_momentum[:,1] = soln.ang_momentum[:,1]
+
+  for i=1:num_timesteps
+    total_torque = zeros(ang_momentum[:,i])
+    total_l_cross_f = zeros(ang_momentum[:,i])
+
+    for contact_idx = 1:num_contacts
+      # get contact location for this contact point
+      contact_location = p.contact_points[contact_idx].location
+
+      # vector from com --> contact location
+      l = contact_location .- soln.com_position[:,i]
+      force_local = soln.forces[:,i,contact_idx]
+
+      # decompose into difference of convex functions
+      pos_convex[:,i,contact_idx], neg_convex[:,i,contact_idx] = difference_convex_functions_decomposition(l, force_local)
+
+      l_cross_f_local = cross(l,force_local)
+      l_cross_f[:,i,contact_idx] = l_cross_f_local
+
+      total_l_cross_f += l_cross_f_local
+      total_torque += soln.torques[:,i,contact_idx]
+    end
+
+    ang_momentum_dot[:,i] = total_l_cross_f + total_torque
+    ang_momentum[:,i+1] = ang_momentum[:,i] + dt*ang_momentum_dot[:,i]
+    orientation[:,i+1] = orientation[:,i] + ang_momentum[:,i]*dt/inertia
+  end
+
+  debug_vals = OptimizationDebugValues(pos_convex=pos_convex, neg_convex=neg_convex,
+  l_cross_f=l_cross_f, ang_momentum=ang_momentum, ang_momentum_dot=ang_momentum_dot,
+  l_cross_f=l_cross_f, orientation=orientation)
 end
