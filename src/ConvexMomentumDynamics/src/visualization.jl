@@ -80,7 +80,7 @@ function draw_com_frame(cd_vis::CentroidalDynamicsVisualizer, knot_point::Int)
   # compute the transform
   translation = Translation(Vec(com_position))
   rotation =  LinearMap(RotXYZ(com_orientation_xyz...))
-  transform = compose(rotation, translation)
+  transform = compose(translation, rotation)
 
   triad_vis = setgeometry!(cd_vis.vis[:com][:frame], triad)
   settransform!(triad_vis, transform)
