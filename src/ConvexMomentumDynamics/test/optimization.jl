@@ -5,7 +5,8 @@
 end
 
 @testset "contact_point" begin
-  ContactPoint("l_foot",[-0.5,0,0])
+  nominal_distance_to_com = 0.5
+  ContactPoint("l_foot",[-0.5,0,0], nominal_distance_to_com)
 end
 
 @testset "add_contact_points!" begin
@@ -63,4 +64,18 @@ end
   # solve the model
   status = solve(p.model)
   soln = get_variable_solution_values(p.vars)
+end
+
+@testset "compute_debug_info" begin
+  p, weights, contact_points, initial_conditions = construct_default_problem()
+  add_contact_points!(p, contact_points)
+  add_variables!(p)
+  add_dynamics_constraints!(p)
+  add_initial_condition_constraints!(p, initial_conditions)
+  add_costs!(p, weights)
+
+  # solve the model
+  status = solve(p.model)
+  soln = get_variable_solution_values(p.vars)
+  debug = compute_debug_info(p, soln)
 end

@@ -9,9 +9,10 @@
   # solve the model
   status = solve(p.model)
   soln = get_variable_solution_values(p.vars)
+  debug = compute_debug_info(p, soln)
 
   #playback trajectory
   DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window();
-  cd_vis = CentroidalDynamicsVisualizer(p=p, soln=soln)
+  cd_vis = CentroidalDynamicsVisualizer(p=p, soln=soln, debug=debug)
   playback_trajectory(cd_vis)
 end

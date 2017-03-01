@@ -3,6 +3,11 @@
   playback_sleep_time::Float64 = 0.5
 end
 
+function CentroidalDynamicsVisualizerOptions(param::OptimizationParameters)
+  force_arrow_normalizer = param.robot_mass*norm(param.gravity)
+  return CentroidalDynamicsVisualizerOptions(force_arrow_normalizer=force_arrow_normalizer)
+end
+
 @with_kw type CentroidalDynamicsVisualizer
   p::CentroidalDynamicsOptimizationProblem
   vis::DrakeVisualizer.Visualizer = DrakeVisualizer.Visualizer()

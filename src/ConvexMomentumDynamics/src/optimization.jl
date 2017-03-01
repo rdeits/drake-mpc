@@ -1,6 +1,7 @@
 type ContactPoint
   name::String
-  location::Array{Float64}
+  location::Vector{Float64}
+  nominal_distance_to_com::Float64
 end
 
 @with_kw type OptimizationParameters
@@ -15,7 +16,10 @@ end
 @with_kw type OptimizationWeights
   com_final_position::Vector{Float64} = [0.,0.,1.]
   com_final_position_weight::Float64 = 100.
-  lin_momentum::Float64 = 0.5
+  lin_momentum_final::Vector{Float64} = [0.,0.,0.]
+  lin_momentum_final_weight::Float64 = 10.
+  lin_momentum::Float64 = 1.0
+  lin_momentum_dot::Float64 = 1.
   forces::Float64 = 0.001
   convex_bounds::Float64 = 1e-3
 end
@@ -97,7 +101,7 @@ function difference_convex_functions_decomposition(l, force)
   # than (1,2)
   a = [-l[3],l[2]]
   b = [l[3],-l[1]]
-  c = [-l[2],-l[1]]
+  c = [-l[2],l[1]]
   d = force[2:3]
   e = force[[1,3]]
   f = force[1:2]
@@ -159,6 +163,8 @@ function add_linear_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiza
   const gravity = p.param.gravity
   const num_contacts = length(p.contact_points)
 
+
+
   for i=1:num_timesteps
       # com position integration constraint
       @constraint(p.model, p.vars.com_position[:,i+1] .- (p.vars.com_position[:,i] .+
@@ -183,6 +189,7 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
   const num_timesteps = p.param.num_timesteps
   const dt = p.param.dt
   const num_contacts = length(p.contact_points)
+  const gravity_norm = norm(p.param.gravity)
 
   for i=1:num_timesteps
       # angular momentum Euler integration constraint
@@ -198,15 +205,23 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
       # the total l x f term
       l_cross_f = zero(AffExpr)
       for contact_idx =1:num_contacts
+          contact_point = p.contact_points[contact_idx]
           # get contact location for this contact point
-          contact_location = p.contact_points[contact_idx].location
+          contact_location = contact_point.location
 
           # vector from com --> contact location
           l = contact_location .- p.vars.com_position[:,i]
           force_local = p.vars.forces[:,i,contact_idx]
 
+          # scale these quantities so that the convex decomposition is
+          # more meaningful
+          l_scaled = l/contact_point.nominal_distance_to_com
+          force_local_scaled = 1.0/gravity_norm * force_local
+          # scale factor for convex decomposition
+          alpha = contact_point.nominal_distance_to_com * gravity_norm
+
           # decompose into difference of convex functions
-          pos_convex, neg_convex = difference_convex_functions_decomposition(l, force_local)
+          pos_convex, neg_convex = difference_convex_functions_decomposition(l_scaled, force_local_scaled)
 
           # add constraint for convex relaxation
           # this is a quadratic constraint since pos_convex/neg_convex are
@@ -215,7 +230,7 @@ function add_angular_momentum_dynamics_constraints!(p::CentroidalDynamicsOptimiz
           @constraint(p.model, neg_convex .<= p.vars.l_cross_f_minus[:,i,contact_idx])
 
           # add the contribution of this contact to the overall l x f term.
-          l_cross_f += p.vars.l_cross_f_plus[:,i,contact_idx] - p.vars.l_cross_f_minus[:,i,contact_idx]
+          l_cross_f += alpha*(p.vars.l_cross_f_plus[:,i,contact_idx] - p.vars.l_cross_f_minus[:,i,contact_idx])
       end
 
       # angular momentum dot constraint
@@ -241,15 +256,22 @@ function add_costs!(p::CentroidalDynamicsOptimizationProblem, weights::Optimizat
 end
 
 function get_final_cost(p::CentroidalDynamicsOptimizationProblem, weights::OptimizationWeights)
+  final_cost = zero(QuadExpr)
   com_final_position_cost = weights.com_final_position_weight*
   l2_norm(p.vars.com_position[:,end] - weights.com_final_position)
-  return com_final_position_cost
+
+  lin_momentum_final_cost = weights.lin_momentum_final_weight*l2_norm(p.vars.lin_momentum[:,end]
+  - weights.lin_momentum_final)
+
+  final_cost = com_final_position_cost + lin_momentum_final_cost
+  return final_cost
 end
 
 function get_running_cost(p::CentroidalDynamicsOptimizationProblem, weights::OptimizationWeights)
   const num_contacts = length(p.contact_points)
 
   lin_momentum_cost = weights.lin_momentum*l2_norm(p.vars.lin_momentum[:,:,:])
+  lin_momentum_dot_cost = weights.lin_momentum_dot*l2_norm(p.vars.lin_momentum_dot[:,:,:])
   force_cost = zero(QuadExpr)
   convex_bound_cost = zero(QuadExpr)
   for contact_idx=1:num_contacts
@@ -258,7 +280,7 @@ function get_running_cost(p::CentroidalDynamicsOptimizationProblem, weights::Opt
       convex_bound_cost += weights.convex_bounds*l2_norm(p.vars.l_cross_f_minus[:,:,contact_idx])
   end
 
-  total_cost = lin_momentum_cost + force_cost + convex_bound_cost
+  total_cost = lin_momentum_cost + lin_momentum_dot_cost + force_cost + convex_bound_cost
   return total_cost
 end
 
@@ -304,10 +326,15 @@ function construct_default_problem()
   model = Model(solver=GurobiSolver(Presolve=0))
   p = CentroidalDynamicsOptimizationProblem(model=model, param=param)
   weights = OptimizationWeights()
+  init_conditions = OptimizationInitialConditions()
+
+  l_foot_location = [0.5,0,0]
+  r_foot_location = [-0.5,0.,0.]
+  nominal_distance_to_com = norm(init_conditions.com_position - l_foot_location)
 
   contact_points = Vector{ContactPoint}()
-  push!(contact_points, ContactPoint("l_foot",[-0.5,0,0]))
-  push!(contact_points, ContactPoint("r_foot",[0.5,0,0]))
+  push!(contact_points, ContactPoint("l_foot",l_foot_location,nominal_distance_to_com))
+  push!(contact_points, ContactPoint("r_foot",r_foot_location,nominal_distance_to_com))
 
   initial_conditions = OptimizationInitialConditions()
   return p, weights, contact_points, initial_conditions
@@ -320,6 +347,7 @@ function compute_debug_info(p::CentroidalDynamicsOptimizationProblem, soln::Opti
   const num_timesteps = p.param.num_timesteps
   const dt = p.param.dt
   const inertia = p.param.robot_inertia
+  const gravity_norm = norm(p.param.gravity)
 
   pos_convex = zeros(soln.l_cross_f_plus)
   neg_convex = zeros(soln.l_cross_f_minus)
@@ -336,15 +364,23 @@ function compute_debug_info(p::CentroidalDynamicsOptimizationProblem, soln::Opti
     total_l_cross_f = zeros(ang_momentum[:,i])
 
     for contact_idx = 1:num_contacts
+      contact_point = p.contact_points[contact_idx]
+
       # get contact location for this contact point
       contact_location = p.contact_points[contact_idx].location
+
 
       # vector from com --> contact location
       l = contact_location .- soln.com_position[:,i]
       force_local = soln.forces[:,i,contact_idx]
 
+      l_scaled = l/contact_point.nominal_distance_to_com
+      force_local_scaled = 1.0/gravity_norm * force_local
+      # scale factor for convex decomposition
+      alpha = contact_point.nominal_distance_to_com * gravity_norm
+
       # decompose into difference of convex functions
-      pos_convex[:,i,contact_idx], neg_convex[:,i,contact_idx] = difference_convex_functions_decomposition(l, force_local)
+      pos_convex[:,i,contact_idx], neg_convex[:,i,contact_idx] = difference_convex_functions_decomposition(l_scaled, force_local_scaled)
 
       l_cross_f_local = cross(l,force_local)
       l_cross_f[:,i,contact_idx] = l_cross_f_local
