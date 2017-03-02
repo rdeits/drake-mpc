@@ -7,7 +7,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import irispy as iris
 import itertools as it
-import mpl_toolkits.mplot3d as a3
+#import mpl_toolkits.mplot3d as a3
 import time
 
 
@@ -134,6 +134,45 @@ def quadratic_program(H, f, A, b):
     cost_min = .5*x_min.T.dot(H.dot(x_min)) + f.T.dot(x_min)
     return [x_min, cost_min]
 
+def maximum_output_admissible_set(A, lhs_x, rhs_x):
+    if np.max(np.absolute(np.linalg.eig(A)[0])) > 1:
+        raise ValueError('Cannot compute MOAS for unstable systems')
+    t = 0
+    convergence = False
+    while convergence == False:
+        # cost function jacobians for all i
+        J = lhs_x.dot(np.linalg.matrix_power(A,t+1))
+        # constraints to each LP
+        cons_lhs = np.vstack([lhs_x.dot(np.linalg.matrix_power(A,k)) for k in range(0,t+1)])
+        cons_rhs = np.vstack([rhs_x for k in range(0,t+1)])
+        # list of all minima
+        s = rhs_x.shape[0]
+        J_sol = [(-linear_program(-J[i,:].T, cons_lhs, cons_rhs)[1] - rhs_x[i]) for i in range(0,s)]
+        if np.max(J_sol) < 0:
+            convergence = True
+        else:
+            t += 1
+    # remove redundant constraints
+    moas = Polyhedron(cons_lhs, cons_rhs)
+    moas.assemble()
+    return [moas, t]
+
+def licq_check(G, active_set, max_cond=1e9):
+    """
+    checks if licq holds
+    INPUTS:
+    G -> gradient of the constraints
+    active_set -> active set
+    OUTPUTS:
+    licq -> flag, = True if licq holds, = False otherwise
+    """
+    G_A = G[active_set,:]
+    licq = True
+    cond = np.linalg.cond(G_A.dot(G_A.T))
+    if cond > max_cond:
+        licq = False
+    return licq
+
 class Polyhedron:
 
     def __init__(self, lhs, rhs):
@@ -143,8 +182,31 @@ class Polyhedron:
         # halfplanes
         self.lhs = lhs
         self.rhs = rhs
+        self. assembled = False
+        return
+
+    def add_facets(self, lhs, rhs):
+        if self. assembled:
+            raise ValueError('Polyhedron already assembled, cannot add facets!')
+        self.lhs = np.vstack((self.lhs, lhs))
+        self.rhs = np.vstack((self.rhs, rhs))
+        return
+
+    def add_bounds(self, x_max, x_min):
+        if self. assembled:
+            raise ValueError('Polyhedron already assembled, cannot add bounds!')
+        n = x_max.shape[0]
+        lhs = np.vstack((np.eye(n), -np.eye(n)))
+        rhs = np.vstack((x_max, -x_min))
+        self.add_facets(lhs, rhs)
+        return
+
+    def assemble(self):
+        if self. assembled:
+            raise ValueError('Polyhedron already assembled, cannot assemble again!')
+        self. assembled = True
         # size
-        [self.n_facets, self.n_vars] = lhs.shape
+        [self.n_facets, self.n_vars] = self.lhs.shape
         # store some data
         self.normalize()
         self.is_empty()
@@ -152,6 +214,7 @@ class Polyhedron:
         self.minimal_facets()
         self.vertices()
         self.facet_centers()
+        return
 
     def normalize(self, toll=1e-6):
         """
@@ -229,8 +292,8 @@ class Polyhedron:
         """
         lhs_bounded = np.vstack((self.lhs_min, np.eye(self.n_vars), -np.eye(self.n_vars)))
         rhs_bounded = np.vstack((self.rhs_min, x_bound*np.ones((2*self.n_vars,1))))
-        p = iris.Polyhedron(lhs_bounded, rhs_bounded)
-        self.vertices = p.generatorPoints()
+        polyhedron_iris = iris.Polyhedron(lhs_bounded, rhs_bounded)
+        self.vertices = polyhedron_iris.generatorPoints()
         if any(np.absolute(np.vstack(self.vertices)).flatten() >= x_bound - toll):
             print("Warning: unbounded polyhedron in the domain ||x||_inf <= " + str(x_bound))
         return
@@ -319,8 +382,8 @@ class Polyhedron:
         n = x_max.shape[0]
         lhs = np.vstack((np.eye(n), -np.eye(n)))
         rhs = np.vstack((x_max, -x_min))
-        p = Polyhedron(lhs, rhs)
-        return p
+        polyhedron = Polyhedron(lhs, rhs)
+        return polyhedron
 
 class DTLinearSystem:
 
@@ -334,28 +397,6 @@ class DTLinearSystem:
         self.state_domain = None
         self.input_domain = None
         return
-
-    def add_state_domain(self, lhs, rhs):
-        if self.state_domain is not None:
-            print('Warning: overwriting state domain!')
-        self.state_domain = Polyhedron(lhs, rhs)
-        return
-
-    def add_state_bounds(self, x_max, x_min):
-        if self.state_domain is not None:
-            print('Warning: overwriting state domain!')
-        self.state_domain = Polyhedron.from_bounds(x_max, x_min)
-
-    def add_input_domain(self, lhs, rhs):
-        if self.input_domain is not None:
-            print('Warning: overwriting input domain!')
-        self.input_domain = Polyhedron(lhs, rhs)
-        return
-
-    def add_input_bounds(self, u_max, u_min):
-        if self.input_domain is not None:
-            print('Warning: overwriting input domain!')
-        self.input_domain = Polyhedron.from_bounds(u_max, u_min)
 
     def evolution_matrices(self, N):
         # free evolution of the system
@@ -376,30 +417,6 @@ class DTLinearSystem:
         x_trajectory = np.vstack((x0, x_trajectory))
         return x_trajectory
 
-    def maximum_output_admissible_set(self):
-        if np.max(np.absolute(np.linalg.eig(self.A)[0])) > 1:
-            raise ValueError('Cannot compute MOAS for unstable systems')
-        if self.n_u > 0:
-            print('Warning: computing MOAS for actuated system')
-        t = 0
-        convergence = False
-        while convergence == False:
-            # cost function jacobians for all i
-            J = self.state_domain.lhs_min.dot(np.linalg.matrix_power(self.A,t+1))
-            # constraints to each LP
-            cons_lhs = np.vstack([self.state_domain.lhs_min.dot(np.linalg.matrix_power(self.A,k)) for k in range(0,t+1)])
-            cons_rhs = np.vstack([self.state_domain.rhs_min for k in range(0,t+1)])
-            # list of all minima
-            s = len(self.state_domain.minimal_facets)
-            J_sol = [(-linear_program(-J[i,:].T, cons_lhs, cons_rhs)[1] - self.state_domain.rhs_min[i]) for i in range(0,s)]
-            if np.max(J_sol) < 0:
-                convergence = True
-            else:
-                t += 1
-        # remove redundant constraints
-        moas = Polyhedron(cons_lhs, cons_rhs)
-        return [moas, t]
-
     @staticmethod
     def from_continuous(t_s, A, B=None):
         n_x = np.shape(A)[0]
@@ -416,17 +433,67 @@ class DTLinearSystem:
 
 class MPCController:
 
-    def __init__(self, sys, Q, R, N, terminal_cost=None, terminal_constraint=None):
+    def __init__(self, sys, N, Q, R, terminal_cost=None, terminal_constraints=None, state_constraints=None, input_constraints=None):
         self.sys = sys
+        self.N = N
         self.Q = Q
         self.R = R
-        self.N = N
         self.terminal_cost = terminal_cost
+        self.state_constraints = state_constraints
+        self.input_constraints = input_constraints
+        self.terminal_constraints = terminal_constraints
+        return
+
+    def add_state_constraint(self, lhs, rhs):
+        if self.state_constraints is None:
+            self.state_constraints = Polyhedron(lhs, rhs)
+        else:
+            self.state_constraints.add_facets(lhs, rhs)
+        return
+
+    def add_input_constraint(self, lhs, rhs):
+        if self.input_constraints is None:
+            self.input_constraints = Polyhedron(lhs, rhs)
+        else:
+            self.input_constraints.add_facets(lhs, rhs)
+        return
+
+    def add_state_bound(self, x_max, x_min):
+        if self.state_constraints is None:
+            self.state_constraints = Polyhedron.from_bounds(x_max, x_min)
+        else:
+            self.state_constraints.add_bounds(x_max, x_min)
+        return
+
+    def add_input_bound(self, u_max, u_min):
+        if self.input_constraints is None:
+            self.input_constraints = Polyhedron.from_bounds(u_max, u_min)
+        else:
+            self.input_constraints.add_bounds(u_max, u_min)
+        return
+
+    def set_terminal_constraint(self, terminal_constraint):
+        self. terminal_constraint = terminal_constraint
+        return
+
+    def assemble(self):
+        if self.state_constraints is not None:
+            self.state_constraints.assemble()
+        if self.input_constraints is not None:
+            self.input_constraints.assemble()
         self.terminal_cost_matrix()
-        self.terminal_constraint = terminal_constraint
         self.constraint_blocks()
         self.cost_blocks()
         self.critical_regions = None
+
+    def terminal_cost_matrix(self):
+        if self.terminal_cost is None:
+            self.P = self.Q
+        elif self.terminal_cost == 'dare':
+            self.P = self.dare()[0]
+        else:
+            raise ValueError('Unknown terminal cost!')
+        return
 
     def dare(self):
         # DARE solution
@@ -435,66 +502,75 @@ class MPCController:
         K = - la.inv(self.sys.B.T.dot(P).dot(self.sys.B)+self.R).dot(self.sys.B.T).dot(P).dot(self.sys.A)
         return [P, K]
 
-    def terminal_constraint_polyhedron(self):
-        if self.terminal_constraint is None:
-            lhs_xN = np.array([]).reshape(0,self.sys.n_x)
-            rhs_xN = np.array([]).reshape(0,1)
-        elif self.terminal_constraint == 'moas':
-            # solve dare
-            K = self.dare()[1]
-            # closed loop dynamics
-            A_cl = self.sys.A + self.sys.B.dot(K)
-            sys_cl = DTLinearSystem(A_cl)
-            # constraints for the maximum output admissible set
-            state_domain_cl_lhs = np.vstack((self.sys.state_domain.lhs_min, self.sys.input_domain.lhs_min.dot(K)))
-            state_domain_cl_rhs = np.vstack((self.sys.state_domain.rhs_min, self.sys.input_domain.rhs_min))
-            sys_cl.add_state_domain(state_domain_cl_lhs, state_domain_cl_rhs)
-            # compute maximum output admissible set
-            moas = sys_cl.maximum_output_admissible_set()[0]
-            lhs_xN = moas.lhs_min
-            rhs_xN = moas.rhs_min
-        elif self.terminal_constraint == 'origin':
-            lhs_xN = np.vstack((np.eye(self.sys.n_x), - np.eye(self.sys.n_x)))
-            rhs_xN = np.zeros((2*self.sys.n_x,1))
-        else:
-            raise ValueError('Unknown terminal constraint!')
-        return[lhs_xN, rhs_xN]
-
     def constraint_blocks(self):
-        # input constraints
-        G_u = la.block_diag(*[self.sys.input_domain.lhs_min for i in range(0, self.N)])
-        W_u = np.vstack([self.sys.input_domain.rhs_min for i in range(0, self.N)])
-        E_u = np.zeros((W_u.shape[0],self.sys.n_x))
-        # state constraints
-        [free_evolution, forced_evolution] = self.sys.evolution_matrices(self.N)
-        lhs_x_diag = la.block_diag(*[self.sys.state_domain.lhs_min for i in range(0, self.N)])
-        G_x = lhs_x_diag.dot(forced_evolution)
-        W_x = np.vstack([self.sys.state_domain.rhs_min for i in range(0, self.N)])
-        E_x = - lhs_x_diag.dot(free_evolution)
-        # terminal constraints
-        [lhs_xN, rhs_xN] = self.terminal_constraint_polyhedron()
-        G_xN = lhs_xN.dot(forced_evolution[-self.sys.n_x:,:])
-        W_xN = rhs_xN
-        E_xN = - lhs_xN.dot(np.linalg.matrix_power(self.sys.A, self.N))
+        # compute each constraint
+        [G_u, W_u, E_u] = self.input_constraint_blocks()
+        [G_x, W_x, E_x] = self.state_constraint_blocks()
+        [G_xN, W_xN, E_xN] = self.terminal_constraint_blocks()
         # gather constraints
         G = np.vstack((G_u, G_x, G_xN))
         W = np.vstack((W_u, W_x, W_xN))
         E = np.vstack((E_u, E_x, E_xN))
-        # remove always-redundant constraints (coincident constraints are extremely problematic!)
-        poly_cons = Polyhedron(np.hstack((G, -E)), W)
-        self.G = poly_cons.lhs_min[:,:self.sys.n_u*self.N]
-        self.E = - poly_cons.lhs_min[:,self.sys.n_u*self.N:]
-        self.W = poly_cons.rhs_min
+        # remove redundant constraints
+        constraint_polyhedron = Polyhedron(np.hstack((G, -E)), W)
+        constraint_polyhedron.assemble()
+        self.G = constraint_polyhedron.lhs_min[:,:self.sys.n_u*self.N]
+        self.E = - constraint_polyhedron.lhs_min[:,self.sys.n_u*self.N:]
+        self.W = constraint_polyhedron.rhs_min
         return
 
-    def terminal_cost_matrix(self):
-        if self.terminal_cost is None:
-            self.P = self.Q
-        elif self.terminal_cost == 'dare':
-            self.P = self.dare()[0]
+    def input_constraint_blocks(self):
+        if self.input_constraints is None:
+            G_u = np.array([]).reshape((0, self.sys.n_u*self.N))
+            W_u = np.array([]).reshape((0, 1))
+            E_u = np.array([]).reshape((0, self.sys.n_x))
         else:
-            raise ValueError('Unknown terminalS cost!')
-        return
+            G_u = la.block_diag(*[self.input_constraints.lhs_min for i in range(0, self.N)])
+            W_u = np.vstack([self.input_constraints.rhs_min for i in range(0, self.N)])
+            E_u = np.zeros((W_u.shape[0],self.sys.n_x))
+        return [G_u, W_u, E_u]
+
+    def state_constraint_blocks(self):
+        if self.state_constraints is None:
+            G_x = np.array([]).reshape((0, self.sys.n_u*self.N))
+            W_x = np.array([]).reshape((0, 1))
+            E_x = np.array([]).reshape((0, self.sys.n_x))
+        else:
+            [free_evolution, forced_evolution] = self.sys.evolution_matrices(self.N)
+            lhs_x_diag = la.block_diag(*[self.state_constraints.lhs_min for i in range(0, self.N)])
+            G_x = lhs_x_diag.dot(forced_evolution)
+            W_x = np.vstack([self.state_constraints.rhs_min for i in range(0, self.N)])
+            E_x = - lhs_x_diag.dot(free_evolution)
+        return [G_x, W_x, E_x]
+
+    def terminal_constraint_blocks(self):
+        if self.terminal_constraints is None:
+            G_xN = np.array([]).reshape((0, self.sys.n_u*self.N))
+            W_xN = np.array([]).reshape((0, 1))
+            E_xN = np.array([]).reshape((0, self.sys.n_x))
+        else:
+            if self.terminal_constraint == 'moas':
+                # solve dare
+                K = self.dare()[1]
+                # closed loop dynamics
+                A_cl = self.sys.A + self.sys.B.dot(K)
+                # constraints for the maximum output admissible set
+                lhs_cl = np.vstack((self.state_constraints.lhs_min, self.input_constraints.lhs_min.dot(K)))
+                rhs_cl = np.vstack((self.state_constraints.rhs_min, self.input_constraints.rhs_min))
+                # compute maximum output admissible set
+                moas = maximum_output_admissible_set(A_cl, lhs_cl, rhs_cl)[0]
+                lhs_xN = moas.lhs_min
+                rhs_xN = moas.rhs_min
+            elif self.terminal_constraint == 'origin':
+                lhs_xN = np.vstack((np.eye(self.sys.n_x), - np.eye(self.sys.n_x)))
+                rhs_xN = np.zeros((2*self.sys.n_x,1))
+            else:
+                raise ValueError('Unknown terminal constraint!')
+            forced_evolution = self.sys.evolution_matrices(self.N)[1]
+            G_xN = lhs_xN.dot(forced_evolution[-self.sys.n_x:,:])
+            W_xN = rhs_xN
+            E_xN = - lhs_xN.dot(np.linalg.matrix_power(self.sys.A, self.N))
+        return [G_xN, W_xN, E_xN]
 
     def cost_blocks(self):
         # quadratic term in the state sequence
@@ -535,7 +611,9 @@ class MPCController:
             # choose the first candidate in the list and remove it
             cr = cr_to_be_explored[0]
             cr_to_be_explored = cr_to_be_explored[1:]
-            if not cr.polyhedron.empty:
+            if cr.polyhedron.empty:
+                print('Empty critical region detected')
+            else:
                 # explore CR
                 explored_cr.append(cr)
                 # for all the facets of the CR
@@ -557,7 +635,7 @@ class MPCController:
                                     print('    corrected active set ' + str(active_set))
                                     cr_to_be_explored.append(CriticalRegion(active_set, self.H, self.G, self.W, self.S))
                                 else:
-                                    print('    unfeasible region detected')
+                                    print('    unfeasible critical region detected')
         self.critical_regions = explored_cr
         toc = time.clock()
         print('\nExplicit solution successfully computed in ' + str(toc-tic) + ' s:')
@@ -627,6 +705,7 @@ class CriticalRegion:
                 rhs = np.vstack((rhs, rhs_type_1[self.inactive_set.index(i),0]))
         # construct polyhedron
         self.polyhedron = Polyhedron(lhs, rhs)
+        self.polyhedron.assemble()
         return
 
     def candidate_active_sets(self):
@@ -783,46 +862,3 @@ def active_set_if_not_licq(candidate_active_set, ind, parent, H, G, W, S, dist=1
                 if lambda_sol[i,0] > toll:
                     active_set_child += [candidate_active_set[i]]
     return active_set_child
-
-def licq_check(G, active_set, max_cond=1e9):
-    """
-    checks if licq holds
-    INPUTS:
-    G -> gradient of the constraints
-    active_set -> active set
-    OUTPUTS:
-    licq -> flag, = True if licq holds, = False otherwise
-    """
-    G_A = G[active_set,:]
-    licq = True
-    cond = np.linalg.cond(G_A.dot(G_A.T))
-    if cond > max_cond:
-        licq = False
-    return licq
-
-
-
-
-def plot3d(poly, dim_proj=[0,1,2], **kwargs):
-    """
-    plots a 3d projection of the polyhedron
-    INPUTS:
-    line_style -> line style
-    dim_proj -> dimensions in which to project the polyhedron
-    OUTPUTS:
-    polyhedron_plot -> figure handle
-    """
-    if poly.empty:
-        raise ValueError('Empty polyhedron!')
-    if len(dim_proj) != 3:
-        raise ValueError('Only 3d polyhedrons!')
-    # extract vertices coponents
-    vertices_proj = np.vstack(poly.vertices)[:,dim_proj]
-    hull = spat.ConvexHull(vertices_proj)
-    ax = a3.Axes3D(plt.gcf())
-    for simplex in hull.simplices:
-        polyhedron_plot = a3.art3d.Poly3DCollection([vertices_proj[simplex]], **kwargs)
-        polyhedron_plot.set_edgecolor('k')
-        ax.add_collection3d(polyhedron_plot)
-
-    return
