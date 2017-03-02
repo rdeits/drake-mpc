@@ -106,14 +106,16 @@ def linear_program(f, A, b, x_bound=1e8):
     cost_min = f.T.dot(x_min)
     return [x_min, cost_min]
 
-def quadratic_program(H, f, A, b):
+def quadratic_program(H, f, A, b, C=None, d=None):
     """
-    solves the quadratic program min x^t * H * x + f^T * x s.t. A * x <= b
+    solves the quadratic program min x^t * H * x + f^T * x s.t. A * x <= b, C * x = d
     INPUTS:
     H -> Hessian of the cost function
     f -> linear term of the cost function
-    A -> left hand side of the constraints
-    b -> right hand side of the constraints
+    A -> left hand side of the inequality constraints
+    b -> right hand side of the inequality constraints
+    C -> left hand side of the equality constraints
+    d -> right hand side of the equality constraints
     OUTPUTS:
     x_min -> argument which minimizes
     cost_min -> minimum of the cost function
@@ -125,7 +127,10 @@ def quadratic_program(H, f, A, b):
     prog = mp.MathematicalProgram()
     x = prog.NewContinuousVariables(n, "x")
     for i in range(0, m):
-        prog.AddLinearConstraint((A[i,:] + 1e-15).dot(x) <= b[i])
+        prog.AddLinearConstraint(A[i,:].dot(x) <= b[i])
+    if C is not None:
+        for i in range(C.shape[0]):
+            prog.AddLinearConstraint(C[i, :].dot(x) == d[i])
     prog.AddQuadraticCost(H, f, x)
     # solve
     solver = GurobiSolver()
