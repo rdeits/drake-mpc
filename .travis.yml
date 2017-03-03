@@ -1,0 +1,26 @@
+language: python
+python:
+  - 2.7
+
+before_install:
+  - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+  - sudo add-apt-repository -y ppa:webupd8team/java
+  - sudo apt-get update
+  - sudo apt-get install g++-4.9-multilib gfortran-4.9 gfortran -y
+  - mkdir -p ~/tools
+  - pushd ~/tools
+  - wget https://cmake.org/files/v3.5/cmake-3.5.2-Linux-x86_64.tar.gz
+  - tar zxvf cmake-3.5.2-Linux-x86_64.tar.gz
+  - rm cmake-3.5.2-Linux-x86_64.tar.gz
+  - cd cmake-3.5.2-Linux-x86_64/bin
+  - export PATH=`pwd`:$PATH
+  - popd
+  - sudo apt-get install oracle-java8-installer -y
+  - sudo apt-get install --no-install-recommends autoconf automake bison doxygen freeglut3-dev git graphviz libgtk2.0-dev libhtml-form-perl libjpeg-dev libmpfr-dev libpng-dev libterm-readkey-perl libtool libvtk5-dev libwww-perl make ninja-build perl pkg-config python-bs4 python-dev python-gtk2 python-html5lib python-numpy python-pip python-sphinx python-yaml unzip valgrind libqt4-dev libqt4-opengl-dev libqwt-dev libvtk-java libvtk5-qt4-dev python-lxml python-scipy python-vtk -y
+  - export CC=gcc-4.9 CXX=g++-4.9 FC=gfortran-4.9
+
+install:
+  - mkdir build
+  - cd build
+  - cmake .. -DCMAKE_INSTALL_PREFIX=install
+  - make
