@@ -3,14 +3,18 @@ project(drake-mpc)
 
 include(ExternalProject)
 
+option(WITH_GUROBI "build with Gurobi" ON)
+option(WITH_MOSEK "build with Mosek" ON)
+option(WITH_IRIS "build with IRIS" ON)
+
 ExternalProject_Add(drake
   GIT_REPOSITORY git@github.com:RobotLocomotion/drake.git
   GIT_TAG d94ab70c5
   GIT_SUBMODULES drake/doc/textbook
   CMAKE_CACHE_ARGS
-  	-DWITH_GUROBI:bool=ON
-  	-DWITH_MOSEK:bool=ON
-  	-DWITH_IRIS:bool=ON
+  	-DWITH_GUROBI:bool=${WITH_GUROBI}
+  	-DWITH_MOSEK:bool=${WITH_MOSEK}
+  	-DWITH_IRIS:bool=${WITH_IRIS}
   CMAKE_ARGS
   	-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
   	-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
