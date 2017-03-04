@@ -6,6 +6,7 @@ include(ExternalProject)
 option(WITH_GUROBI "build with Gurobi" ON)
 option(WITH_MOSEK "build with Mosek" ON)
 option(WITH_IRIS "build with IRIS" ON)
+option(WITH_DIRECTOR "build with Director" ON)
 
 ExternalProject_Add(drake
   GIT_REPOSITORY git@github.com:RobotLocomotion/drake.git
@@ -15,6 +16,7 @@ ExternalProject_Add(drake
   	-DWITH_GUROBI:bool=${WITH_GUROBI}
   	-DWITH_MOSEK:bool=${WITH_MOSEK}
   	-DWITH_IRIS:bool=${WITH_IRIS}
+    -DWITH_DIRECTOR:bool=${WITH_DIRECTOR}
     -DWITH_BULLET:bool=OFF
     -DWITH_CCD:bool=OFF
     -DWITH_FCL:bool=OFF
