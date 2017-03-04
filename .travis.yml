@@ -33,4 +33,4 @@ install:
   - mkdir build
   - cd build
   - cmake .. -DCMAKE_INSTALL_PREFIX=install -DWITH_GUROBI=OFF -DWITH_DIRECTOR=OFF -G Ninja
-  - ninja
+  - ninja -v
