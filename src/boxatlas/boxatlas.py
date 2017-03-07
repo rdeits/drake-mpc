@@ -5,6 +5,9 @@ from collections import namedtuple
 from director import viewerclient as vc
 from irispy import Polyhedron
 import numpy as np
+import time
+from ipywidgets import interact, interactive, fixed, interact_manual
+import ipywidgets as widgets
 
 
 class BoxAtlas(object):
@@ -62,6 +65,50 @@ def draw(vis, state, atlasinput=None, env=None):
             v.settransform(vc.transformations.rotation_matrix(angle, [0, 1, 0], origin).dot(vc.transformations.translation_matrix(origin)))
 
 
+def drawSinglePlanFrame(vis, solnData, t):
+    states = solnData.states
+    inputs = solnData.inputs
+    ts = solnData.ts
+    env = solnData.opt.env
+    draw(vis, states(t), inputs(t), env)
+
+
+def planPlayback(vis, solnData):
+    # unpack solution
+    states = solnData.states
+    inputs = solnData.inputs
+    ts = solnData.ts
+
+    # draw solution plan
+    for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
+        drawSinglePlanFrame(vis, solnData, t)
+        time.sleep(0.05)
+
+
+def planPlayback(vis, solnData, slider=False):
+    """
+    :param vis:
+    :param solnData: namedtuple with fields
+    opt - BoxAtlasContactStabilization
+    states
+    inputs
+    contact_indicator
+    ts
+    :param: slider - whether or not to use slider
+    :return: None
+    """
+
+    # unpack solution
+    ts = solnData.ts
+
+    if slider:
+        slider = widgets.FloatSlider(min=ts[0], max=ts[-1] - 0.001, step=0.01, value=0)
+        interact(drawSinglePlanFrame, vis=fixed(vis), solnData=fixed(solnData), t=slider)
+    else:
+        # draw solution plan
+        for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
+            drawSinglePlanFrame(vis, solnData, t)
+            time.sleep(0.05)
 
 class BoxAtlasState(object):
     def __init__(self, robot, qcom=None, vcom=None, qlimb=None):

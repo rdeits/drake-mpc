@@ -4,10 +4,10 @@ from itertools import islice, chain
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from pydrake.solvers.gurobi import GurobiSolver
-from polynomial import Polynomial
-from piecewise import Piecewise
-from trajectory import Trajectory
-from boxatlas import BoxAtlasState, BoxAtlasInput
+from utils.polynomial import Polynomial
+from utils.piecewise import Piecewise
+from utils.trajectory import Trajectory
+from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
 
 
 class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
