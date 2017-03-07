@@ -47,13 +47,12 @@ def extract_linear_inequalities(prog):
 
 def mpc_order(prog, u, x0):
     order = np.zeros(prog.num_vars())
-    order[:] = np.inf
     for (i, var) in enumerate(itertools.chain(u.flat, x0.flatten(order='F'))):
         order[prog.FindDecisionVariableIndex(var)] = i
     return np.argsort(order)
 
 
-def eliminate_equality_constrained_variables(C, d):
+def eliminate_equality_constrained_variables(C, d, preserve=None):
     """
     Given C and d defining a set of linear equality constraints:
 
@@ -64,15 +63,19 @@ def eliminate_equality_constrained_variables(C, d):
     This allows us to rewrite a QP with equality constraints into a QP over
     fewer variables with no equality constraints.
     """
-    assert np.all(d == 0), "Right-hand side of the equality constraints must be zero"
+    if preserve is None:
+        preserve = np.zeros(C.shape[1], dtype=np.bool)
     C = C.copy()
     num_vars = C.shape[1]
     W = np.eye(num_vars)
     for j in range(C.shape[1] - 1, C.shape[1] - C.shape[0] - 1, -1):
+        if preserve[j]:
+            continue
         nonzeros = np.nonzero(C[:, j])[0]
         if len(nonzeros) != 1:
             raise ValueError("C must be triangular (up to permutation). Try permuting the problem to mpc_order()")
         i = nonzeros[0]
+        assert d[i] == 0, "Right-hand side of the equality constraints must be zero"
         v = C[i, :j] / -C[i, j]
         W = W.dot(np.vstack([np.eye(j), v]))
         C = C[[k for k in range(C.shape[0]) if k != i], :]
@@ -182,7 +185,8 @@ class SimpleQuadraticProgram(object):
 
     def solve(self):
         prog, y, T = self.to_mathematicalprogram()
-        prog.Solve()
+        result = prog.Solve()
+        assert result == mp.SolutionResult.kSolutionFound, "Optimization failed with: {}".format(result)
         return T.A.dot(prog.GetSolution(y)) + T.b
 
     def affine_variable_substitution(self, U, v):
@@ -267,7 +271,7 @@ class SimpleQuadraticProgram(object):
         v = -np.linalg.inv(self.H).T.dot(self.f)
         return self.affine_variable_substitution(U, v)
 
-    def eliminate_equality_constrained_variables(self):
+    def eliminate_equality_constrained_variables(self, preserve=None):
         """
         Given:
             - self: an optimization program over variables x
@@ -281,9 +285,7 @@ class SimpleQuadraticProgram(object):
         values for x
         """
 
-        print self.C.shape
-        W = eliminate_equality_constrained_variables(self.C, self.d)
-        print W.shape
+        W = eliminate_equality_constrained_variables(self.C, self.d, preserve)
         # x = W z
         new_program = self.affine_variable_substitution(W, np.zeros(self.num_vars))
         mask = np.ones(new_program.C.shape[0], dtype=np.bool)
@@ -318,7 +320,7 @@ class CanonicalMPCQP(object):
     """
     Represents a model-predictive control quadratic program of the form:
 
-    minimize 0.5 u' H u + x' F u
+    minimize 0.5 u' H u + x' F u + 0.5 * x' Q x
       u, x
     such that G u <= W + E x
 
@@ -326,9 +328,10 @@ class CanonicalMPCQP(object):
 
         y = T.A * [u; x] + T.b
     """
-    def __init__(self, H, F, G, W, E, T=None):
+    def __init__(self, H, F, Q, G, W, E, T=None):
         self.H = H
         self.F = F
+        self.Q = Q
         self.G = G
         self.W = W
         self.E = E
@@ -340,34 +343,38 @@ class CanonicalMPCQP(object):
     @staticmethod
     def from_mathematicalprogram(prog, u, x):
         u = np.asarray(u)
+        nu = u.size
         x = np.asarray(x)
+        nvars = u.size + x.size
         qp = SimpleQuadraticProgram.from_mathematicalprogram(prog)
-        qp = qp.transform_goal_to_origin()
         order = mpc_order(prog, u, x)
         qp = qp.permute_variables(order)
-        qp = qp.eliminate_equality_constrained_variables()
+
+        preserve = np.zeros(nvars, dtype=np.bool)
+        preserve[:(nu + x.shape[0])] = True
+        qp = qp.eliminate_equality_constrained_variables(preserve)
+        qp = qp.transform_goal_to_origin()
 
         assert np.allclose(qp.f, 0)
         assert np.allclose(qp.C, 0)
-        assert np.allclose(qp.d, 0)
-
-        nu = u.size
         H = qp.H[:nu, :nu]
         F = qp.H[nu:, :nu]
+        Q = qp.H[nu:, nu:]
+
         G = qp.A[:, :nu]
         W = qp.b
         E = -qp.A[:, nu:]
-        return CanonicalMPCQP(H, F, G, W, E, qp.T)
+        return CanonicalMPCQP(H, F, Q, G, W, E, qp.T)
 
     def to_simple_qp(self):
         nu = self.G.shape[1]
         nx = self.E.shape[1]
-        H = np.vstack(np.hstack((self.H, self.F.T)),
-                      np.hstack((self.F, np.zeros((nx, nx)))))
+        H = np.vstack((np.hstack((self.H, self.F.T)),
+                       np.hstack((self.F, self.Q))))
         f = np.zeros(nu + nx)
-        A = np.hstack(self.G, -self.E)
+        A = np.hstack((self.G, -self.E))
         b = self.W
-        return SimpleQuadraticProgram(H, f, A, b, C=None, d=None, T = self.T)
+        return SimpleQuadraticProgram(H, f, A, b, C=None, d=None, T=self.T)
 
     def solve(self):
         return self.to_simple_qp().solve()

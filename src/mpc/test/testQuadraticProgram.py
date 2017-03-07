@@ -219,60 +219,61 @@ class TestQuadraticProgram(unittest.TestCase):
             self.assertTrue(np.allclose(recentered.f, 0))
             self.assertTrue(np.allclose(recentered.solve(), qp.solve(), atol=1e-7))
 
-    # def test_canonical_qp(self):
-    #     m = 1.
-    #     l = 1.
-    #     g = 10.
-    #     N = 5
-    #     A = np.array([
-    #         [0., 1.],
-    #         [g/l, 0.]
-    #     ])
-    #     B = np.array([
-    #         [0.],
-    #         [1/(m*l**2.)]
-    #     ])
-    #     t_s = .1
-    #     sys = DTLinearSystem.from_continuous(t_s, A, B)
+    def test_canonical_qp(self):
+        m = 1.
+        l = 1.
+        g = 10.
+        N = 4
+        A = np.array([
+            [0., 1.],
+            [g/l, 0.]
+        ])
+        B = np.array([
+            [0.],
+            [1/(m*l**2.)]
+        ])
+        t_s = .1
+        sys = DTLinearSystem.from_continuous(t_s, A, B)
 
-    #     x_max = np.array([np.pi/6., np.pi/22. / (N*t_s)])
-    #     x_min = -x_max
-    #     u_max = np.array([m*g*l*np.pi/8.])
-    #     u_min = -u_max
+        x_max = np.array([np.pi/6., np.pi/22. / (N*t_s)])
+        x_min = -x_max
+        u_max = np.array([m*g*l*np.pi/8.])
+        u_min = -u_max
 
-    #     Q = np.eye(A.shape[0])/100.
-    #     R = np.eye(B.shape[1])
-    #     dim = 2
+        Q = np.eye(A.shape[0])/100.
+        R = np.eye(B.shape[1])
+        dim = 2
 
-    #     np.random.seed(3)
-    #     for i in range(20):
-    #         x_goal = np.random.rand(dim) * (x_max - x_min) + x_min
-    #         prog = mp.MathematicalProgram()
+        np.random.seed(3)
+        for i in range(20):
+            x_goal = np.random.rand(dim) * (x_max - x_min) + x_min
+            x_start = np.array([0., 0.])
+            prog = mp.MathematicalProgram()
 
-    #         x = prog.NewContinuousVariables(2, N, "x")
-    #         u = prog.NewContinuousVariables(1, N, "u")
+            x = prog.NewContinuousVariables(2, N, "x")
+            u = prog.NewContinuousVariables(1, N, "u")
 
-    #         for j in range(N - 1):
-    #             x_next = sys.A.dot(x[:, j]) + sys.B.dot(u[:, j])
-    #             for i in range(dim):
-    #                 prog.AddLinearConstraint(x[i, j + 1] == x_next[i])
+            for j in range(N - 1):
+                x_next = sys.A.dot(x[:, j]) + sys.B.dot(u[:, j])
+                for i in range(dim):
+                    prog.AddLinearConstraint(x[i, j + 1] == x_next[i])
 
-    #         for j in range(N):
-    #             for i in range(x.shape[0]):
-    #                 prog.AddLinearConstraint(x[i, j] <= x_max[i])
-    #                 prog.AddLinearConstraint(x[i, j] >= x_min[i])
-    #             for i in range(u.shape[0]):
-    #                 prog.AddLinearConstraint(u[i, j] <= u_max[i])
-    #                 prog.AddLinearConstraint(u[i, j] >= u_min[i])
+            for j in range(N):
+                for i in range(x.shape[0]):
+                    prog.AddLinearConstraint(x[i, j] <= x_max[i])
+                    prog.AddLinearConstraint(x[i, j] >= x_min[i])
+                for i in range(u.shape[0]):
+                    prog.AddLinearConstraint(u[i, j] <= u_max[i])
+                    prog.AddLinearConstraint(u[i, j] >= u_min[i])
 
-    #         for j in range(N):
-    #             prog.AddQuadraticCost((x[:, j] - x_goal).dot(Q).dot(x[:, j] - x_goal))
-    #             prog.AddQuadraticCost(u[:, j].T.dot(R).dot(u[:, j]))
+            for j in range(N):
+                prog.AddQuadraticCost((x[:, j] - x_goal).dot(Q).dot(x[:, j] - x_goal))
+                prog.AddQuadraticCost(u[:, j].T.dot(R).dot(u[:, j]))
 
-
-
-
-
+            assert prog.Solve() == mp.SolutionResult.kSolutionFound
+            qp = sym.SimpleQuadraticProgram.from_mathematicalprogram(prog)
+            mpc_qp = sym.CanonicalMPCQP.from_mathematicalprogram(prog, u, x)
+            self.assertTrue(np.allclose(qp.solve(), mpc_qp.solve(), atol=1e-7))
 
 if __name__ == '__main__':
     unittest.main()
