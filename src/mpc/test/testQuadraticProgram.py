@@ -27,10 +27,10 @@ class TestQuadraticProgram(unittest.TestCase):
                                            simple.C, simple.d)
             self.assertTrue(np.allclose(xstar_prog1, xstar_qp.flatten(), atol=1e-7))
 
-            prog2, x2 = simple.to_mathematicalprogram()
+            prog2, x2, T = simple.to_mathematicalprogram()
             prog2.Solve()
             xstar_prog2 = prog2.GetSolution(x2)
-            self.assertTrue(np.allclose(xstar_prog1, xstar_prog2))
+            self.assertTrue(np.allclose(xstar_prog1, T.A.dot(xstar_prog2) + T.b))
 
     def test_substitution(self):
         np.random.seed(1)
@@ -52,7 +52,7 @@ class TestQuadraticProgram(unittest.TestCase):
             ystar = simple_y.solve()
             xstar = simple_x.solve()
 
-            self.assertTrue(np.allclose(T.dot(ystar) + u, xstar))
+            self.assertTrue(np.allclose(ystar, xstar))
 
     def test_permutation(self):
         np.random.seed(2)
@@ -79,12 +79,11 @@ class TestQuadraticProgram(unittest.TestCase):
                                                              np.zeros(x.size))
             ystar = simple_y.solve()
             xstar = simple_x.solve()
-            self.assertTrue(np.allclose(ystar, xstar[order]))
+            self.assertTrue(np.allclose(ystar, xstar))
 
-            simple_z, Pz = simple_x.permute_variables(order)
+            simple_z = simple_x.permute_variables(order)
             zstar = simple_z.solve()
-            self.assertTrue(np.allclose(zstar, xstar[order]))
-            self.assertTrue(np.allclose(Pz.dot(zstar), xstar))
+            self.assertTrue(np.allclose(zstar, xstar))
 
     def test_elimination(self):
         m = 1.
@@ -137,11 +136,11 @@ class TestQuadraticProgram(unittest.TestCase):
                 prog.AddQuadraticCost(u[:, j].T.dot(R).dot(u[:, j]))
 
             simple = sym.SimpleQuadraticProgram.from_mathematicalprogram(prog)
-            simple_eliminated, W = simple.eliminate_equality_constrained_variables()
+            simple_eliminated = simple.eliminate_equality_constrained_variables()
 
-            u_x_star = simple.solve()
-            u_x0_star = simple_eliminated.solve()
-            self.assertTrue(np.allclose(u_x_star, W.dot(u_x0_star)))
+            self.assertEqual(simple_eliminated.C.shape[0], 0)
+            self.assertEqual(simple_eliminated.d.shape[0], 0)
+            self.assertTrue(np.allclose(simple.solve(), simple_eliminated.solve()))
 
     def test_mpc_order(self):
         m = 1.
@@ -195,16 +194,81 @@ class TestQuadraticProgram(unittest.TestCase):
 
             simple = sym.SimpleQuadraticProgram.from_mathematicalprogram(prog)
             order = sym.mpc_order(prog, u, x)
-            simple_permuted, P = simple.permute_variables(order)
-            x_u_star = simple.solve()
-            u_x_star = simple_permuted.solve()
-            self.assertTrue(np.allclose(P.dot(u_x_star), x_u_star))
-            self.assertTrue(np.allclose(u_x_star[:N], x_u_star[2 * N:]))
+            simple_permuted = simple.permute_variables(order)
+            self.assertTrue(np.allclose(simple.solve(), simple_permuted.solve()))
 
-            simple_eliminated, W = simple_permuted.eliminate_equality_constrained_variables()
-            u_x0_star = simple_eliminated.solve()
-            self.assertTrue(np.allclose(u_x_star[:(N + dim)], u_x0_star))
-            self.assertTrue(np.allclose(u_x_star, W.dot(u_x0_star)))
+            simple_eliminated = simple_permuted.eliminate_equality_constrained_variables()
+            self.assertTrue(np.allclose(simple.solve(), simple_eliminated.solve()))
+
+    def test_recenter(self):
+        np.random.seed(2)
+        for i in range(20):
+            x_goal = np.random.rand(3) * 20 - 10
+            prog = mp.MathematicalProgram()
+            x = prog.NewContinuousVariables(3, "x")
+            prog.AddLinearConstraint(x[0] >= 1)
+            prog.AddLinearConstraint(x[0] <= 10)
+            prog.AddLinearConstraint(x[0] + 5 * x[1] <= 11)
+            prog.AddLinearConstraint(-x[1] + 5 * x[0] <= 5)
+            prog.AddLinearConstraint(x[2] == x[0] + -2 * x[1])
+            prog.AddQuadraticCost(np.sum(np.power(x - x_goal, 2)))
+
+            qp = sym.SimpleQuadraticProgram.from_mathematicalprogram(prog)
+            recentered = qp.transform_goal_to_origin()
+            self.assertFalse(np.allclose(qp.f, 0))
+            self.assertTrue(np.allclose(recentered.f, 0))
+            self.assertTrue(np.allclose(recentered.solve(), qp.solve(), atol=1e-7))
+
+    # def test_canonical_qp(self):
+    #     m = 1.
+    #     l = 1.
+    #     g = 10.
+    #     N = 5
+    #     A = np.array([
+    #         [0., 1.],
+    #         [g/l, 0.]
+    #     ])
+    #     B = np.array([
+    #         [0.],
+    #         [1/(m*l**2.)]
+    #     ])
+    #     t_s = .1
+    #     sys = DTLinearSystem.from_continuous(t_s, A, B)
+
+    #     x_max = np.array([np.pi/6., np.pi/22. / (N*t_s)])
+    #     x_min = -x_max
+    #     u_max = np.array([m*g*l*np.pi/8.])
+    #     u_min = -u_max
+
+    #     Q = np.eye(A.shape[0])/100.
+    #     R = np.eye(B.shape[1])
+    #     dim = 2
+
+    #     np.random.seed(3)
+    #     for i in range(20):
+    #         x_goal = np.random.rand(dim) * (x_max - x_min) + x_min
+    #         prog = mp.MathematicalProgram()
+
+    #         x = prog.NewContinuousVariables(2, N, "x")
+    #         u = prog.NewContinuousVariables(1, N, "u")
+
+    #         for j in range(N - 1):
+    #             x_next = sys.A.dot(x[:, j]) + sys.B.dot(u[:, j])
+    #             for i in range(dim):
+    #                 prog.AddLinearConstraint(x[i, j + 1] == x_next[i])
+
+    #         for j in range(N):
+    #             for i in range(x.shape[0]):
+    #                 prog.AddLinearConstraint(x[i, j] <= x_max[i])
+    #                 prog.AddLinearConstraint(x[i, j] >= x_min[i])
+    #             for i in range(u.shape[0]):
+    #                 prog.AddLinearConstraint(u[i, j] <= u_max[i])
+    #                 prog.AddLinearConstraint(u[i, j] >= u_min[i])
+
+    #         for j in range(N):
+    #             prog.AddQuadraticCost((x[:, j] - x_goal).dot(Q).dot(x[:, j] - x_goal))
+    #             prog.AddQuadraticCost(u[:, j].T.dot(R).dot(u[:, j]))
+
 
 
 

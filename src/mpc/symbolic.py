@@ -114,20 +114,32 @@ def permutation_matrix(order):
     return P
 
 
+class Affine(object):
+    __slots__ = ["A", "b"]
+    def __init__(self, A, b):
+        self.A = A
+        self.b = b
+
+
 class SimpleQuadraticProgram(object):
     """
     Represents a quadratic program of the form:
 
-    minimize 0.5 x' H x + f' x
-       x
-    such that A x <= b
-              C x == d
+    minimize 0.5 y' H y + f' y
+       y
+    such that A y <= b
+              C y == d
+
+    Also stores an affine transform T to allow us to perform affine variable
+    substitutions on the internal model without affecting the result. Calling
+    solve() solves the inner optimization for y, then returns:
+    x = T.A * y + T.b
 
     This class is meant to be used as a temporary container while performing
     variable substitutions and other transformations on the optimization
     problem.
     """
-    def __init__(self, H, f, A, b, C=None, d=None):
+    def __init__(self, H, f, A, b, C=None, d=None, T=None):
         self.H = H
         self.f = f
         self.A = A
@@ -136,6 +148,9 @@ class SimpleQuadraticProgram(object):
             assert C is None and d is None, "C and d must both be provided together"
             C = np.zeros((0, A.shape[1]))
             d = np.zeros(0)
+        if T is None:
+            T = Affine(np.eye(A.shape[1]), np.zeros(A.shape[1]))
+        self.T = T
         self.C = C
         self.d = d
 
@@ -157,54 +172,100 @@ class SimpleQuadraticProgram(object):
 
     def to_mathematicalprogram(self):
         prog = mp.MathematicalProgram()
-        x = prog.NewContinuousVariables(self.A.shape[1], "x")
+        y = prog.NewContinuousVariables(self.T.A.shape[1], "y")
         for i in range(self.A.shape[0]):
-            prog.AddLinearConstraint(self.A[i, :].dot(x) <= self.b[i])
+            prog.AddLinearConstraint(self.A[i, :].dot(y) <= self.b[i])
         for i in range(self.C.shape[0]):
-            prog.AddLinearConstraint(self.C[i, :].dot(x) == self.d[i])
-        prog.AddQuadraticCost(self.H, self.f, x)
-        return prog, x
+            prog.AddLinearConstraint(self.C[i, :].dot(y) == self.d[i])
+        prog.AddQuadraticCost(0.5 * y.dot(self.H).dot(y) + self.f.dot(y))
+        return prog, y, self.T
 
     def solve(self):
-        prog, x = self.to_mathematicalprogram()
+        prog, y, T = self.to_mathematicalprogram()
         prog.Solve()
-        return prog.GetSolution(x)
+        return T.A.dot(prog.GetSolution(y)) + T.b
 
-    def affine_variable_substitution(self, T, u):
+    def affine_variable_substitution(self, U, v):
         """
         Given an optimization of the form:
-        minimize 0.5 x' H x + f' x
-           x
-        such that A x <= b
-                  C x == d
+        minimize 0.5 z' H z + f' z
+           z
+        such that A z <= b
+                  C z == d
 
         perform a variable substitution defined by:
-            x = T y + u
+            z = U y + v
 
         and return an equivalent optimization over y.
+
+        Since we have x = T.A * z + T.b and z = U * y + v, we have
+        x = T.A * U * y + T.A * v + T.b
+
+        Note that the new optimization will have its internal affine transform
+        set up to ensure that calling solve() still returns x rather than y.
+        Thus, we should have:
+
+            qp2 = qp1.affine_variable_substitution(U, v)
+            qp2.solve() == qp1.solve()
+
+        for any U and v, even though the internal matrices of qp2 will be
+        different than qp1.
         """
 
-        # 0.5 (T y + u)' H (T y + u) + f' (T y + u)
-        # 0.5 ( y' T' H T y + y' T' H u + u' H T y + u' H u) + f' T y + f' u
-        # 0.5 y' T' H T y + u' H T y + f' T y + f' u + 0.5 u' H u
+        # 0.5 (U y + v)' H (U y + v) + f' (U y + v)
+        # 0.5 ( y' U' H U y + y' U' H v + v' H U y + v' H v) + f' U y + f' v
+        # 0.5 y' U' H U y + v' H U y + f' U y + f' v + 0.5 v' H v
         # eliminate constants:
-        # 0.5 y' T' H T y + (u' H T + f' T) y
+        # 0.5 y' U' H U y + (v' H U + f' U) y
         #
         # A x <= b
-        # A (T y + u) <= b
-        # A T y <= b - A u
+        # A (U y + v) <= b
+        # A U y <= b - A v
         #
         # C x == d
-        # C (T y + u) == d
-        # C T y == d - C u
+        # C (U y + v) == d
+        # C U y == d - C v
 
-        H = T.T.dot(self.H).dot(T)
-        f = u.dot(self.H).dot(T) + self.f.dot(T)
-        A = self.A.dot(T)
-        b = self.b - self.A.dot(u)
-        C = self.C.dot(T)
-        d = self.d - self.C.dot(u)
-        return SimpleQuadraticProgram(H, f, A, b, C, d)
+        H = U.T.dot(self.H).dot(U)
+        f = v.dot(self.H).dot(U) + self.f.dot(U)
+        A = self.A.dot(U)
+        b = self.b - self.A.dot(v)
+        C = self.C.dot(U)
+        d = self.d - self.C.dot(v)
+        T = Affine(self.T.A.dot(U), self.T.A.dot(v) + self.T.b)
+        return SimpleQuadraticProgram(H, f, A, b, C, d, T)
+
+    def transform_goal_to_origin(self):
+        """
+        Given an optimization of the form:
+        minimize 0.5 z' H z + f' z
+           z
+        such that A z <= b
+                  C z == d
+
+        Perform a variable substitution defined by:
+
+            z = U y + v
+
+        such that we can write an equivalent optimization over y with f' = 0
+        (in other words, such that the optimal cost occurs at y = 0).
+        """
+
+        """
+        0.5 z' H z + f' z
+        0.5 ( y' U' H U y + y' U' H v + v' H U y + v' H v) + f' U y + f' v
+        0.5 y' U' H U y + v' H U y + f' U y + f' v + 0.5 v' H v
+        eliminate constants:
+        0.5 y' U' H U y + (v' H U + f' U) y
+
+        So we need: v' H U + f' U == 0
+        U' H' v + U' f == 0
+        H' v + f == 0
+        v == -H^-T f
+        """
+        U = np.eye(self.num_vars)
+        v = -np.linalg.inv(self.H).T.dot(self.f)
+        return self.affine_variable_substitution(U, v)
 
     def eliminate_equality_constrained_variables(self):
         """
@@ -214,10 +275,15 @@ class SimpleQuadraticProgram(object):
             - new_program: a new optimization program over variables
                            z \subset x with all equality-constrained variables
                            eliminated by solving C x == d
-            - W: a matrix such that x = W z
+
+        Note: new_program will have its internal affine transform set to account
+        for the elimination, so calling new_program.solve() will still return
+        values for x
         """
 
+        print self.C.shape
         W = eliminate_equality_constrained_variables(self.C, self.d)
+        print W.shape
         # x = W z
         new_program = self.affine_variable_substitution(W, np.zeros(self.num_vars))
         mask = np.ones(new_program.C.shape[0], dtype=np.bool)
@@ -227,7 +293,7 @@ class SimpleQuadraticProgram(object):
                 mask[i] = False
         new_program.C = new_program.C[mask, :]
         new_program.d = new_program.d[mask]
-        return new_program, W
+        return new_program
 
     def permute_variables(self, new_order):
         """
@@ -237,13 +303,16 @@ class SimpleQuadraticProgram(object):
         Returns:
             - new_program: an optimization program over variables z such that
                            z = x[new_order]
-            - P: a permutation matrix such that x = P z = P x[new_order]
+
+        Note: new_program will have its internal affine transform set to account
+        for the permutation, so calling new_program.solve() will still return
+        values in the original order of x.
         """
         assert len(new_order) == self.num_vars
         P = np.linalg.inv(permutation_matrix(new_order))
         # x = P x[new_order]
-        new_program = self.affine_variable_substitution(P, np.zeros(self.num_vars))
-        return new_program, P
+        return self.affine_variable_substitution(P, np.zeros(self.num_vars))
+
 
 class CanonicalMPCQP(object):
     """
@@ -252,22 +321,31 @@ class CanonicalMPCQP(object):
     minimize 0.5 u' H u + x' F u
       u, x
     such that G u <= W + E x
+
+    Also stores an affine transform T such that calling solve() returns:
+
+        y = T.A * [u; x] + T.b
     """
-    def __init__(self, H, F, G, W, E):
+    def __init__(self, H, F, G, W, E, T=None):
         self.H = H
         self.F = F
         self.G = G
         self.W = W
         self.E = E
+        if T is None:
+            nv = G.shape[1] + E.shape[1]
+            T = Affine(np.eye(nv), np.zeros(nv))
+        self.T = T
 
     @staticmethod
     def from_mathematicalprogram(prog, u, x):
         u = np.asarray(u)
         x = np.asarray(x)
         qp = SimpleQuadraticProgram.from_mathematicalprogram(prog)
+        qp = qp.transform_goal_to_origin()
         order = mpc_order(prog, u, x)
-        qp, P = qp.permute_variables(order)
-        qp, W = qp.eliminate_equality_constrained_variables()
+        qp = qp.permute_variables(order)
+        qp = qp.eliminate_equality_constrained_variables()
 
         assert np.allclose(qp.f, 0)
         assert np.allclose(qp.C, 0)
@@ -279,7 +357,21 @@ class CanonicalMPCQP(object):
         G = qp.A[:, :nu]
         W = qp.b
         E = -qp.A[:, nu:]
-        return CanonicalMPCQP(H, F, G, W, E)
+        return CanonicalMPCQP(H, F, G, W, E, qp.T)
+
+    def to_simple_qp(self):
+        nu = self.G.shape[1]
+        nx = self.E.shape[1]
+        H = np.vstack(np.hstack((self.H, self.F.T)),
+                      np.hstack((self.F, np.zeros((nx, nx)))))
+        f = np.zeros(nu + nx)
+        A = np.hstack(self.G, -self.E)
+        b = self.W
+        return SimpleQuadraticProgram(H, f, A, b, C=None, d=None, T = self.T)
+
+    def solve(self):
+        return self.to_simple_qp().solve()
+
 
 def generate_mpc_system(prog, u, x0):
     C, d = extract_linear_equalities(prog)
