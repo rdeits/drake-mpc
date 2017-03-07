@@ -48,7 +48,7 @@ def extract_linear_inequalities(prog):
 def mpc_order(prog, u, x0):
     order = np.zeros(prog.num_vars())
     order[:] = np.inf
-    for (i, var) in enumerate(itertools.chain(u.flat, x0.flat)):
+    for (i, var) in enumerate(itertools.chain(u.flat, x0.flatten(order='F'))):
         order[prog.FindDecisionVariableIndex(var)] = i
     return np.argsort(order)
 
@@ -70,7 +70,8 @@ def eliminate_equality_constrained_variables(C, d):
     W = np.eye(num_vars)
     for j in range(C.shape[1] - 1, C.shape[1] - C.shape[0] - 1, -1):
         nonzeros = np.nonzero(C[:, j])[0]
-        assert len(nonzeros) == 1
+        if len(nonzeros) != 1:
+            raise ValueError("C must be triangular (up to permutation). Try permuting the problem to mpc_order()")
         i = nonzeros[0]
         v = C[i, :j] / -C[i, j]
         W = W.dot(np.vstack([np.eye(j), v]))
@@ -137,6 +138,10 @@ class SimpleQuadraticProgram(object):
             d = np.zeros(0)
         self.C = C
         self.d = d
+
+    @property
+    def num_vars(self):
+        return self.A.shape[1]
 
     @staticmethod
     def from_mathematicalprogram(prog):
@@ -214,7 +219,7 @@ class SimpleQuadraticProgram(object):
 
         W = eliminate_equality_constrained_variables(self.C, self.d)
         # x = W z
-        new_program = self.affine_variable_substitution(W, np.zeros(self.A.shape[1]))
+        new_program = self.affine_variable_substitution(W, np.zeros(self.num_vars))
         mask = np.ones(new_program.C.shape[0], dtype=np.bool)
         for i in range(new_program.C.shape[0]):
             if np.allclose(new_program.C[i, :], 0):
@@ -228,14 +233,16 @@ class SimpleQuadraticProgram(object):
         """
         Given:
             - self: an optimization program over variables x
+            - new_order: a new ordering of variables
         Returns:
             - new_program: an optimization program over variables z such that
                            z = x[new_order]
             - P: a permutation matrix such that x = P z = P x[new_order]
         """
+        assert len(new_order) == self.num_vars
         P = np.linalg.inv(permutation_matrix(new_order))
         # x = P x[new_order]
-        new_program = self.affine_variable_substitution(P, np.zeros(self.A.shape[1]))
+        new_program = self.affine_variable_substitution(P, np.zeros(self.num_vars))
         return new_program, P
 
 
