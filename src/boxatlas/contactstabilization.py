@@ -167,9 +167,10 @@ class BoxAtlasContactStabilization(object):
         self.add_constraints(initial_state)
         self.add_costs()
 
-    def add_constraints(self, initial_state, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
+    def add_constraints(self, initial_state, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
         for k in range(num_limbs):
+
             self.prog.add_no_force_at_distance_constraints(self.vars.contact[k],
                                                            self.vars.contact_force[k], Mf)
             self.prog.add_contact_surface_constraints(self.vars.qlimb[k],
@@ -180,6 +181,8 @@ class BoxAtlasContactStabilization(object):
                                                     self.vars.contact[k], Mf)
             self.prog.add_contact_velocity_constraints(self.vars.qlimb[k],
                                                        self.vars.contact[k], Mv)
+
+            vlimb_max = self.robot.limb_velocity_limits[k]
             self.prog.add_limb_velocity_constraints(self.vars.qcom,
                                                     self.vars.qlimb[k],
                                                     vlimb_max,
@@ -258,7 +261,7 @@ class BoxAtlasContactStabilization(object):
 
         # weights for all the costs in the optimization
         params['costs'] = dict()
-        params['costs']['contact_force'] = 1e-3
+        params['costs']['contact_force'] = 1e-2
         params['costs']['qcom_running'] = 1e3
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
