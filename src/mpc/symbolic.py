@@ -53,18 +53,29 @@ def mpc_order(prog, u, x0):
     return np.argsort(order)
 
 
-def simplify(C):
+def eliminate_equality_constrained_variables(C, d):
+    """
+    Given C and d defining a set of linear equality constraints:
+
+        C x == d
+
+    find a matrix W such that C x == d implies x = W z for some z \subset x
+
+    This allows us to rewrite a QP with equality constraints into a QP over
+    fewer variables with no equality constraints.
+    """
+    assert np.all(d == 0), "Right-hand side of the equality constraints must be zero"
     C = C.copy()
     num_vars = C.shape[1]
-    D = np.eye(num_vars)
+    W = np.eye(num_vars)
     for j in range(C.shape[1] - 1, C.shape[1] - C.shape[0] - 1, -1):
         nonzeros = np.nonzero(C[:, j])[0]
         assert len(nonzeros) == 1
         i = nonzeros[0]
         v = C[i, :j] / -C[i, j]
-        D = D.dot(np.vstack([np.eye(j), v]))
+        W = W.dot(np.vstack([np.eye(j), v]))
         C = C[[k for k in range(C.shape[0]) if k != i], :]
-    return D
+    return W
 
 
 def extract_objective(prog):
@@ -189,6 +200,43 @@ class SimpleQuadraticProgram(object):
         C = self.C.dot(T)
         d = self.d - self.C.dot(u)
         return SimpleQuadraticProgram(H, f, A, b, C, d)
+
+    def eliminate_equality_constrained_variables(self):
+        """
+        Given:
+            - self: an optimization program over variables x
+        Returns:
+            - new_program: a new optimization program over variables
+                           z \subset x with all equality-constrained variables
+                           eliminated by solving C x == d
+            - W: a matrix such that x = W z
+        """
+
+        W = eliminate_equality_constrained_variables(self.C, self.d)
+        # x = W z
+        new_program = self.affine_variable_substitution(W, np.zeros(self.A.shape[1]))
+        mask = np.ones(new_program.C.shape[0], dtype=np.bool)
+        for i in range(new_program.C.shape[0]):
+            if np.allclose(new_program.C[i, :], 0):
+                assert np.isclose(new_program.d[i], 0)
+                mask[i] = False
+        new_program.C = new_program.C[mask, :]
+        new_program.d = new_program.d[mask]
+        return new_program, W
+
+    def permute_variables(self, new_order):
+        """
+        Given:
+            - self: an optimization program over variables x
+        Returns:
+            - new_program: an optimization program over variables z such that
+                           z = x[new_order]
+            - P: a permutation matrix such that x = P z = P x[new_order]
+        """
+        P = np.linalg.inv(permutation_matrix(new_order))
+        # x = P x[new_order]
+        new_program = self.affine_variable_substitution(P, np.zeros(self.A.shape[1]))
+        return new_program, P
 
 
 def generate_mpc_system(prog, u, x0):

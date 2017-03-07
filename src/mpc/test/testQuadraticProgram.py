@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 import mpc.symbolic as sym
-from mpc.mpc_tools import quadratic_program
+from mpc.mpc_tools import quadratic_program, DTLinearSystem
 import pydrake.solvers.mathematicalprogram as mp
 
 
@@ -77,11 +77,76 @@ class TestQuadraticProgram(unittest.TestCase):
             # x = P^-1 * y
             simple_y = simple_x.affine_variable_substitution(np.linalg.inv(P),
                                                              np.zeros(x.size))
-
             ystar = simple_y.solve()
             xstar = simple_x.solve()
-
             self.assertTrue(np.allclose(ystar, xstar[order]))
+
+            simple_z, Pz = simple_x.permute_variables(order)
+            zstar = simple_z.solve()
+            self.assertTrue(np.allclose(zstar, xstar[order]))
+            self.assertTrue(np.allclose(Pz.dot(zstar), xstar))
+
+    def test_elimination(self):
+        m = 1.
+        l = 1.
+        g = 10.
+        A = np.array([
+            [0., 1.],
+            [g/l, 0.]
+        ])
+        B = np.array([
+            [0.],
+            [1/(m*l**2.)]
+        ])
+        N = 5
+        t_s = .1
+        sys = DTLinearSystem.from_continuous(t_s, A, B)
+
+        x_max = np.array([np.pi/6., np.pi/22. / (N*t_s)])
+        x_min = -x_max
+        u_max = np.array([m*g*l*np.pi/8.])
+        u_min = -u_max
+
+        Q = np.eye(A.shape[0])/100.
+        R = np.eye(B.shape[1])
+        N = 5
+        dim = 2
+
+        np.random.seed(3)
+        for i in range(20):
+            x_goal = np.random.rand(dim) * (x_max - x_min) + x_min
+            prog = mp.MathematicalProgram()
+
+            u = prog.NewContinuousVariables(1, N, "u")
+            x = prog.NewContinuousVariables(2, N, "x")
+
+            for j in range(N - 1):
+                x_next = sys.A.dot(x[:, j]) + sys.B.dot(u[:, j])
+                for i in range(dim):
+                    prog.AddLinearConstraint(x[i, j + 1] == x_next[i])
+
+            for j in range(N):
+                for i in range(x.shape[0]):
+                    prog.AddLinearConstraint(x[i, j] <= x_max[i])
+                    prog.AddLinearConstraint(x[i, j] >= x_min[i])
+                for i in range(u.shape[0]):
+                    prog.AddLinearConstraint(u[i, j] <= u_max[i])
+                    prog.AddLinearConstraint(u[i, j] >= u_min[i])
+
+            for j in range(N):
+                prog.AddQuadraticCost((x[:, j] - x_goal).dot(Q).dot(x[:, j] - x_goal))
+                prog.AddQuadraticCost(u[:, j].T.dot(R).dot(u[:, j]))
+
+            simple = sym.SimpleQuadraticProgram.from_mathematicalprogram(prog)
+            simple_eliminated, W = simple.eliminate_equality_constrained_variables()
+
+            u_x_star = simple.solve()
+            u_x0_star = simple_eliminated.solve()
+            self.assertTrue(np.allclose(u_x_star, W.dot(u_x0_star)))
+            # self.assertTrue(np.allclose(u_x_star[:(N + dim)], u_x0_star))
+
+
+
 
 
 if __name__ == '__main__':
