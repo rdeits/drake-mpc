@@ -214,6 +214,8 @@ class BoxAtlasContactStabilization(object):
         cost_weights = self.params['costs']
         self.prog.AddQuadraticCost(
             cost_weights['contact_force'] * np.sum(np.sum(np.power(self.vars.contact_force[k](t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
+
+
         self.prog.AddQuadraticCost(
             cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
 
@@ -233,8 +235,9 @@ class BoxAtlasContactStabilization(object):
         left_leg_idx = self.robot.limb_idx_map["left_leg"]
 
         # final position costs for arms
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[right_arm_idx][0] - (qcomf[0] + 0.25))**2)
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[left_arm_idx][0] - (qcomf[0] - 0.25))**2)
+        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] *  np.sum(np.power(qlimbf[right_arm_idx] - (qcomf + np.array([0.75,0]) ),2) ) )
+        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * np.sum(
+            np.power(qlimbf[left_arm_idx] - (qcomf + np.array([-0.75, 0])), 2)))
 
         # final position costs for legs
         self.prog.AddQuadraticCost(
@@ -242,6 +245,20 @@ class BoxAtlasContactStabilization(object):
         self.prog.AddQuadraticCost(
             cost_weights['leg_final_position'] * (qlimbf[left_leg_idx][0] - (qcomf[0] - 0.25)) ** 2)
 
+        self.add_contact_velocity_cost(self.params['costs']['limb_velocity'])
+
+    def add_contact_velocity_cost(self, weight):
+        qcom = self.vars.qcom
+        dt = self.dt
+
+        for qlimb in self.vars.qlimb:
+            ts = qcom.breaks
+            dim = qcom(ts[0]).size
+            vcom = qcom.derivative()
+            for j in range(len(ts) - 2):
+                relative_velocity = 1.0 / dt * (qlimb(ts[j + 1]) - qlimb(ts[j])) - vcom(ts[j])
+                for i in range(dim):
+                    self.prog.AddQuadraticCost(weight*(relative_velocity[i])**2)
     def solve(self):
         solver = GurobiSolver()
         self.prog.SetSolverOption(mp.SolverType.kGurobi, "LogToConsole", 1)
@@ -267,6 +284,7 @@ class BoxAtlasContactStabilization(object):
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
         params['costs']['leg_final_position'] = 1e4
+        params['costs']['limb_velocity'] = 1e-1
 
         return params
 
