@@ -245,6 +245,41 @@ class SimpleQuadraticProgram(object):
         new_program = self.affine_variable_substitution(P, np.zeros(self.num_vars))
         return new_program, P
 
+class CanonicalMPCQP(object):
+    """
+    Represents a model-predictive control quadratic program of the form:
+
+    minimize 0.5 u' H u + x' F u
+      u, x
+    such that G u <= W + E x
+    """
+    def __init__(self, H, F, G, W, E):
+        self.H = H
+        self.F = F
+        self.G = G
+        self.W = W
+        self.E = E
+
+    @staticmethod
+    def from_mathematicalprogram(prog, u, x):
+        u = np.asarray(u)
+        x = np.asarray(x)
+        qp = SimpleQuadraticProgram.from_mathematicalprogram(prog)
+        order = mpc_order(prog, u, x)
+        qp, P = qp.permute_variables(order)
+        qp, W = qp.eliminate_equality_constrained_variables()
+
+        assert np.allclose(qp.f, 0)
+        assert np.allclose(qp.C, 0)
+        assert np.allclose(qp.d, 0)
+
+        nu = u.size
+        H = qp.H[:nu, :nu]
+        F = qp.H[nu:, :nu]
+        G = qp.A[:, :nu]
+        W = qp.b
+        E = -qp.A[:, nu:]
+        return CanonicalMPCQP(H, F, G, W, E)
 
 def generate_mpc_system(prog, u, x0):
     C, d = extract_linear_equalities(prog)
