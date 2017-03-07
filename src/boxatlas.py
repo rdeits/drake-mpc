@@ -25,6 +25,9 @@ class BoxAtlas(object):
         Polyhedron.fromBounds([-1.0, -0.5], [-0.5, 0.5])  # left arm
     ]
 
+    limb_idx_map = {"right_arm": 0, "right_leg": 1, "left_leg":2,
+                    "left_arm":3}
+
     def __init__(self):
         pass
 
