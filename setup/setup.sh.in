@@ -1,1 +1,1 @@
-export PYTHONPATH="@CMAKE_INSTALL_PREFIX@/lib/python2.7/dist-packages:$PYTHONPATH"
+export PYTHONPATH="@CMAKE_INSTALL_PREFIX@/lib/python2.7/dist-packages:@CMAKE_CURRENT_LIST_DIR@/src:$PYTHONPATH"
