@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 from itertools import islice, chain
+from collections import namedtuple
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from pydrake.solvers.gurobi import GurobiSolver
@@ -8,6 +9,10 @@ from utils.polynomial import Polynomial
 from utils.piecewise import Piecewise
 from utils.trajectory import Trajectory
 from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
+
+
+SolutionData = namedtuple("SolutionData",
+                          ["opt" ,"states", "inputs", "contact_indicator", "ts"])
 
 
 class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
@@ -93,7 +98,13 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
                 self.AddLinearConstraint((-vlimb(tnext)[i] - (Mbig * (1 - indicator))) <= 0)
 
     def get_piecewise_solution(self, piecewise):
-        return piecewise.map(lambda p: p.map(lambda x: self.GetSolution(x)))
+        def get_solution(x):
+            try:
+                return self.GetSolution(x)
+            except TypeError:
+                return x
+
+        return piecewise.map(lambda p: p.map(lambda x: get_solution(x)))
 
     def extract_solution(self, robot, qcom, qlimb, contact, contact_force):
         qcom = self.get_piecewise_solution(qcom)
@@ -129,7 +140,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
 
 class BoxAtlasVariables(object):
-    def __init__(self, prog, ts, num_limbs, dim):
+    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
         prog.add_continuity_constraints(self.qcom)
         self.vcom = self.qcom.derivative()
@@ -140,13 +151,20 @@ class BoxAtlasVariables(object):
         for q in self.qlimb:
             prog.add_continuity_constraints(q)
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
-        self.contact = [prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary") for k in range(num_limbs)]
+
+        if contact_assignments is None:
+            self.contact = [prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary") for k in range(num_limbs)]
+        else:
+            assert len(contact_assignments) == num_limbs
+            self.contact = contact_assignments
 
 
 class BoxAtlasContactStabilization(object):
     def __init__(self, initial_state, env,
                  dt=0.05,
-                 num_time_steps=20, params=None):
+                 num_time_steps=20,
+                 params=None,
+                 contact_assignments=None):
 
         # load the parameters
         if params is None:
@@ -163,7 +181,8 @@ class BoxAtlasContactStabilization(object):
         self.env = env
         self.prog = MixedIntegerTrajectoryOptimization()
         num_limbs = len(self.robot.limb_bounds)
-        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim)
+        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
+                                      contact_assignments)
         self.add_constraints(initial_state)
         self.add_costs()
 
@@ -246,11 +265,12 @@ class BoxAtlasContactStabilization(object):
         result = solver.Solve(self.prog)
         print(result)
         assert result == mp.SolutionResult.kSolutionFound
-        return self.prog.extract_solution(self.robot,
-                                          self.vars.qcom,
-                                          self.vars.qlimb,
-                                          self.vars.contact,
-                                          self.vars.contact_force)
+        states, inputs, contact = self.prog.extract_solution(
+            self.robot, self.vars.qcom, self.vars.qlimb,
+            self.vars.contact, self.vars.contact_force)
+        ts = states.components[0].breaks
+        return SolutionData(opt=self, states=states, inputs=inputs,
+                            contact_indicator=contact, ts=ts)
 
     @staticmethod
     def get_optimization_parameters():
