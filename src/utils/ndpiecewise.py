@@ -32,3 +32,8 @@ class NDPiecewise(object):
                 return element
         return None
 
+    def __len__(self):
+        return len(self.elements)
+
+    def __iter__(self):
+        return iter(self.elements)
