@@ -251,37 +251,37 @@ class BoxAtlasContactStabilization(object):
         cost_weights = self.params['costs']
         self.prog.AddQuadraticCost(
             cost_weights['contact_force'] * np.sum(np.sum(np.power(self.vars.contact_force[k](t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
-        # self.prog.AddQuadraticCost(
-        #     cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
-        # self.prog.AddQuadraticCost(
-        #     0.001 * np.sum(np.sum(np.power(self.vars.qcom.derivative().derivative()(t), 2)) for t in self.ts[:-1]))
-        # self.prog.AddQuadraticCost(
-        #     0.001 * np.sum(np.sum(np.power(self.vars.qlimb[k].derivative()(t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
+        self.prog.AddQuadraticCost(
+            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
+        self.prog.AddQuadraticCost(
+            0.001 * np.sum(np.sum(np.power(self.vars.qcom.derivative().derivative()(t), 2)) for t in self.ts[:-1]))
+        self.prog.AddQuadraticCost(
+            0.001 * np.sum(np.sum(np.power(self.vars.qlimb[k].derivative()(t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
 
-        # qcomf = self.vars.qcom.from_below(self.ts[-1])
-        # vcomf = self.vars.vcom.from_below(self.ts[-1])
-        # self.prog.AddQuadraticCost(
-        #     cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1]), 2)))
-        # self.prog.AddQuadraticCost(
-        #     cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
+        qcomf = self.vars.qcom.from_below(self.ts[-1])
+        vcomf = self.vars.vcom.from_below(self.ts[-1])
+        self.prog.AddQuadraticCost(
+            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1]), 2)))
+        self.prog.AddQuadraticCost(
+            cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
 
 
-        # # limb final position costs
-        # qlimbf = [self.vars.qlimb[k].from_below(self.ts[-1]) for k in range(num_limbs)]
-        # right_arm_idx = self.robot.limb_idx_map["right_arm"]
-        # right_leg_idx = self.robot.limb_idx_map["right_leg"]
-        # left_arm_idx = self.robot.limb_idx_map["left_arm"]
-        # left_leg_idx = self.robot.limb_idx_map["left_leg"]
+        # limb final position costs
+        qlimbf = [self.vars.qlimb[k].from_below(self.ts[-1]) for k in range(num_limbs)]
+        right_arm_idx = self.robot.limb_idx_map["right_arm"]
+        right_leg_idx = self.robot.limb_idx_map["right_leg"]
+        left_arm_idx = self.robot.limb_idx_map["left_arm"]
+        left_leg_idx = self.robot.limb_idx_map["left_leg"]
 
-        # # final position costs for arms
-        # self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[right_arm_idx][0] - (qcomf[0] + 0.25))**2)
-        # self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[left_arm_idx][0] - (qcomf[0] - 0.25))**2)
+        # final position costs for arms
+        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[right_arm_idx][0] - (qcomf[0] + 0.25))**2)
+        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[left_arm_idx][0] - (qcomf[0] - 0.25))**2)
 
-        # # final position costs for legs
-        # self.prog.AddQuadraticCost(
-        #     cost_weights['leg_final_position'] * (qlimbf[right_leg_idx][0] - (qcomf[0] + 0.25)) ** 2)
-        # self.prog.AddQuadraticCost(
-        #     cost_weights['leg_final_position'] * (qlimbf[left_leg_idx][0] - (qcomf[0] - 0.25)) ** 2)
+        # final position costs for legs
+        self.prog.AddQuadraticCost(
+            cost_weights['leg_final_position'] * (qlimbf[right_leg_idx][0] - (qcomf[0] + 0.25)) ** 2)
+        self.prog.AddQuadraticCost(
+            cost_weights['leg_final_position'] * (qlimbf[left_leg_idx][0] - (qcomf[0] - 0.25)) ** 2)
 
     def solve(self):
         solver = GurobiSolver()
