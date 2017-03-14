@@ -1,5 +1,6 @@
-numpy
-matplotlib
+numpy >= 1.10.4
+matplotlib >= 1.4
 pycddlib
-pyhull
-sympy
+pyhull >= 1.5
+sympy >= 0.7.6
+scipy >= 0.18
