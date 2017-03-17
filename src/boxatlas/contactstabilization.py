@@ -74,7 +74,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             b = surface.pose_constraints.getB()
             qlimb_after_dt = qlimb.from_below(ts[j + 1])
             for i in range(A.shape[0]):
-                self.AddLinearConstraint((A[i, :].dot(qlimb_after_dt) - (b[i] + Mbig * (1 - contact(t)[0]))) <= 0)
+                self.AddLinearConstraint(A[i, :].dot(qlimb_after_dt) <= b[i] + Mbig * (1 - contact(t)[0]))
 
     def add_contact_force_constraints(self, contact_force, surface, contact, Mbig):
         ts = contact_force.breaks
@@ -153,10 +153,14 @@ class BoxAtlasVariables(object):
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
 
         if contact_assignments is None:
-            self.contact = [prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary") for k in range(num_limbs)]
-        else:
-            assert len(contact_assignments) == num_limbs
-            self.contact = contact_assignments
+            contact_assignments = [None for i in range(num_limbs)]
+        assert len(contact_assignments) == num_limbs
+        self.contact = []
+        for c in contact_assignments:
+            if c is None:
+                self.contact.append(prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary"))
+            else:
+                self.contact.append(c)
 
     def all_state_variables(self):
         x = []
@@ -229,6 +233,10 @@ class BoxAtlasContactStabilization(object):
                                                 self.robot.limb_bounds[k])
             # switches = self.prog.count_contact_switches(self.vars.contact[k])
             # self.prog.AddLinearConstraint(switches <= 2)
+        # for k in [1, 2]:
+        #     for t in self.vars.qlimb[k].breaks[:-1]:
+        #         self.prog.AddLinearConstraint(self.vars.contact[k](t)[0] == 1)
+        #         # self.prog.AddLinearConstraint(self.vars.qlimb[k](t)[1] >= 0.0 * (1 - self.vars.contact[k](t)[0]))
 
         A = self.env.free_space.getA()
         b = self.env.free_space.getB()
@@ -261,7 +269,7 @@ class BoxAtlasContactStabilization(object):
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1]), 2)))
+            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1.1]), 2)))
         self.prog.AddQuadraticCost(
             cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
 

@@ -22,10 +22,10 @@ class BoxAtlas(object):
     ]
 
     limb_bounds = [
-        Polyhedron.fromBounds([0.5, -0.5], [1.0, 0.5]),    # right arm
-        Polyhedron.fromBounds([0.0, -1.0], [0.5, -0.5]),   # right leg
-        Polyhedron.fromBounds([-0.5, -1.0], [0.0, -0.5]),  # left leg
-        Polyhedron.fromBounds([-1.0, -0.5], [-0.5, 0.5])  # left arm
+        Polyhedron.fromBounds([0.25, -0.7], [0.75, 0.3]),    # right arm
+        Polyhedron.fromBounds([0.0, -1.15], [0.35, -0.5]),   # right leg
+        Polyhedron.fromBounds([-0.35, -1.15], [0.0, -0.5]),  # left leg
+        Polyhedron.fromBounds([-0.75, -0.7], [-0.25, 0.3])  # left arm
     ]
 
     limb_idx_map = {"right_arm": 0, "right_leg": 1, "left_leg":2,
