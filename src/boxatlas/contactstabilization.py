@@ -185,7 +185,7 @@ class BoxAtlasVariables(object):
 
 
 class BoxAtlasContactStabilization(object):
-    def __init__(self, initial_state, env,
+    def __init__(self, initial_state, env, desired_state,
                  dt=0.05,
                  num_time_steps=20,
                  params=None,
@@ -209,7 +209,7 @@ class BoxAtlasContactStabilization(object):
         self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
                                       contact_assignments)
         self.add_constraints(initial_state)
-        self.add_costs()
+        self.add_costs(desired_state)
 
     def add_constraints(self, initial_state, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
@@ -254,24 +254,23 @@ class BoxAtlasContactStabilization(object):
                 self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
                 self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
 
-    def add_costs(self):
+    def add_costs(self, desired_state):
         num_limbs = len(self.robot.limb_bounds)
         cost_weights = self.params['costs']
         self.prog.AddQuadraticCost(
             cost_weights['contact_force'] * np.sum(np.sum(np.power(self.vars.contact_force[k](t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
+            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - desired_state.qcom, 2)) for q in self.vars.qcom.at_all_breaks()))
+
         self.prog.AddQuadraticCost(
-            0.001 * np.sum(np.sum(np.power(self.vars.qcom.derivative().derivative()(t), 2)) for t in self.ts[:-1]))
-        self.prog.AddQuadraticCost(
-            0.001 * np.sum(np.sum(np.power(self.vars.qlimb[k].derivative()(t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
+            0.001 * np.sum([np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
 
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1.1]), 2)))
+            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - desired_state.qcom, 2)))
         self.prog.AddQuadraticCost(
-            cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
+            cost_weights['vcom_final'] * np.sum(np.power(vcomf - desired_state.vcom, 2)))
 
 
         # limb final position costs
@@ -282,14 +281,16 @@ class BoxAtlasContactStabilization(object):
         left_leg_idx = self.robot.limb_idx_map["left_leg"]
 
         # final position costs for arms
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[right_arm_idx][0] - (qcomf[0] + 0.25))**2)
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * (qlimbf[left_arm_idx][0] - (qcomf[0] - 0.25))**2)
+        self.prog.AddQuadraticCost(
+            cost_weights["arm_final_position"] * np.sum(np.power(qlimbf[right_arm_idx] - desired_state.qlimb[right_arm_idx], 2)))
+        self.prog.AddQuadraticCost(
+            cost_weights["arm_final_position"] * np.sum(np.power(qlimbf[left_arm_idx] - desired_state.qlimb[left_arm_idx], 2)))
 
         # final position costs for legs
         self.prog.AddQuadraticCost(
-            cost_weights['leg_final_position'] * (qlimbf[right_leg_idx][0] - (qcomf[0] + 0.25)) ** 2)
+            cost_weights['leg_final_position'] * np.sum(np.power(qlimbf[right_leg_idx] - desired_state.qlimb[right_leg_idx], 2)))
         self.prog.AddQuadraticCost(
-            cost_weights['leg_final_position'] * (qlimbf[left_leg_idx][0] - (qcomf[0] - 0.25)) ** 2)
+            cost_weights['leg_final_position'] * np.sum(np.power(qlimbf[left_leg_idx] - desired_state.qlimb[left_leg_idx], 2)))
 
     def solve(self):
         solver = GurobiSolver()

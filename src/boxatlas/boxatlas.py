@@ -49,7 +49,7 @@ def draw(vis, state, atlasinput=None, env=None):
         if atlasinput is not None:
             v = limb_vis["force"]
             force = np.array([atlasinput.flimb[i][0], 0, atlasinput.flimb[i][1]])
-            v.setgeometry(vc.PolyLine(points=[[0, 0, 0], list(0.01 * force)], end_head=True))
+            v.setgeometry(vc.PolyLine(points=[[0, 0, 0], list(0.005 * force)], end_head=True))
 
     if env is not None:
         for (i, surface) in enumerate(env.surfaces):
@@ -110,6 +110,7 @@ def planPlayback(vis, solnData, slider=False):
             drawSinglePlanFrame(vis, solnData, t)
             time.sleep(0.05)
 
+
 class BoxAtlasState(object):
     def __init__(self, robot, qcom=None, vcom=None, qlimb=None):
         self.robot = robot
@@ -123,6 +124,12 @@ class BoxAtlasState(object):
         self.qcom = qcom
         self.vcom = vcom
         self.qlimb = qlimb
+
+    def copy(self):
+        return BoxAtlasState(robot=self.robot,
+                             qcom=self.qcom.copy(),
+                             vcom=self.vcom.copy(),
+                             qlimb=[q.copy() for q in self.qlimb])
 
 
 class BoxAtlasInput(object):
