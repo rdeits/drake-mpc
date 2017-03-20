@@ -205,8 +205,11 @@ class BoxAtlasContactStabilization(object):
         for i in range(self.dim):
             self.prog.AddLinearConstraint(self.vars.qcom(self.ts[0])[i] == initial_state.qcom[i])
             self.prog.AddLinearConstraint(self.vars.vcom(self.ts[0])[i] == initial_state.vcom[i])
+
+
             for k in range(num_limbs):
-                self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
+                # constrain limbs to have zero initial velocity
+                # self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
                 self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
 
     def add_costs(self):
