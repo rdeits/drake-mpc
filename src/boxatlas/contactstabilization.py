@@ -158,6 +158,27 @@ class BoxAtlasVariables(object):
             assert len(contact_assignments) == num_limbs
             self.contact = contact_assignments
 
+    def all_state_variables(self):
+        x = []
+        for j in range(len(self.qcom.functions)):
+            xj = np.hstack([np.hstack(self.qcom.functions[j].coeffs[:-1])] +
+                           [np.hstack(q.functions[j].coeffs[:-1]) for q in self.qlimb])
+            x.append(xj)
+        return np.vstack(x).T
+
+    def all_input_variables(self):
+        u = []
+        for j in range(len(self.qcom.functions)):
+            uj = np.hstack([np.hstack(self.qcom.functions[j].coeffs[-1:])] +
+                           [np.hstack(q.functions[j].coeffs[-1:]) for q in self.qlimb] +
+                           [np.hstack(f.functions[j].coeffs) for f in self.contact_force])
+            u.append(uj)
+        return np.vstack(u).T
+
+
+
+
+
 
 class BoxAtlasContactStabilization(object):
     def __init__(self, initial_state, env,
@@ -232,6 +253,10 @@ class BoxAtlasContactStabilization(object):
             cost_weights['contact_force'] * np.sum(np.sum(np.power(self.vars.contact_force[k](t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
         self.prog.AddQuadraticCost(
             cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
+        self.prog.AddQuadraticCost(
+            0.001 * np.sum(np.sum(np.power(self.vars.qcom.derivative().derivative()(t), 2)) for t in self.ts[:-1]))
+        self.prog.AddQuadraticCost(
+            0.001 * np.sum(np.sum(np.power(self.vars.qlimb[k].derivative()(t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
 
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
@@ -241,7 +266,7 @@ class BoxAtlasContactStabilization(object):
             cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
 
 
-        # limb final position consts
+        # limb final position costs
         qlimbf = [self.vars.qlimb[k].from_below(self.ts[-1]) for k in range(num_limbs)]
         right_arm_idx = self.robot.limb_idx_map["right_arm"]
         right_leg_idx = self.robot.limb_idx_map["right_leg"]
