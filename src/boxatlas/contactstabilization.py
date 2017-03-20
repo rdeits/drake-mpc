@@ -317,7 +317,7 @@ class BoxAtlasContactStabilization(object):
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
-        params['costs']['leg_final_position'] = 1e4
+        params['costs']['leg_final_position'] = 1e2
 
         return params
 

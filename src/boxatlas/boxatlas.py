@@ -16,15 +16,15 @@ class BoxAtlas(object):
     mass = 10
     limb_velocity_limits = [
         10,
-        10,
-        10,
+        20,
+        20,
         10
     ]
 
     limb_bounds = [
         Polyhedron.fromBounds([0.25, -0.7], [0.75, 0.3]),    # right arm
-        Polyhedron.fromBounds([0.0, -1.15], [0.35, -0.5]),   # right leg
-        Polyhedron.fromBounds([-0.35, -1.15], [0.0, -0.5]),  # left leg
+        Polyhedron.fromBounds([0.05, -1.12], [0.35, -0.5]),   # right leg
+        Polyhedron.fromBounds([-0.35, -1.12], [-0.05, -0.5]),  # left leg
         Polyhedron.fromBounds([-0.75, -0.7], [-0.25, 0.3])  # left arm
     ]
 
