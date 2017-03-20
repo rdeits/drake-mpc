@@ -263,7 +263,7 @@ class BoxAtlasContactStabilization(object):
             cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - desired_state.qcom, 2)) for q in self.vars.qcom.at_all_breaks()))
 
         self.prog.AddQuadraticCost(
-            0.001 * np.sum([np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
+            cost_weights['vcom_running'] * np.sum([np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
 
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
@@ -314,6 +314,7 @@ class BoxAtlasContactStabilization(object):
         params['costs'] = dict()
         params['costs']['contact_force'] = 1e-3
         params['costs']['qcom_running'] = 1e3
+        params['costs']['vcom_running'] = 1e-3
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
