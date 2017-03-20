@@ -197,7 +197,7 @@ class BoxAtlasContactStabilization(object):
         else:
             self.params = params
 
-        self.robot = initial_state.robot
+        self.robot = desired_state.robot
         time_horizon = num_time_steps * dt
         self.dt = dt
         self.ts = np.linspace(0, time_horizon, time_horizon / dt + 1)
@@ -208,10 +208,21 @@ class BoxAtlasContactStabilization(object):
         num_limbs = len(self.robot.limb_bounds)
         self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
                                       contact_assignments)
-        self.add_constraints(initial_state)
+        self.add_constraints()
+        if initial_state is not None:
+            self.add_initial_state_constraints(initial_state)
         self.add_costs(desired_state)
 
-    def add_constraints(self, initial_state, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
+    def add_initial_state_constraints(self, initial_state):
+        num_limbs = len(self.robot.limb_bounds)
+        for i in range(self.dim):
+            self.prog.AddLinearConstraint(self.vars.qcom(self.ts[0])[i] == initial_state.qcom[i])
+            self.prog.AddLinearConstraint(self.vars.vcom(self.ts[0])[i] == initial_state.vcom[i])
+            for k in range(num_limbs):
+                self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
+                self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
+
+    def add_constraints(self, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
         for k in range(num_limbs):
             self.prog.add_no_force_at_distance_constraints(self.vars.contact[k],
@@ -246,13 +257,6 @@ class BoxAtlasContactStabilization(object):
                 self.prog.AddLinearConstraint((A[i, :].dot(q) - b[i]) <= 0)
 
         self.prog.add_dynamics_constraints(self.robot, self.vars.qcom, self.vars.contact_force)
-
-        for i in range(self.dim):
-            self.prog.AddLinearConstraint(self.vars.qcom(self.ts[0])[i] == initial_state.qcom[i])
-            self.prog.AddLinearConstraint(self.vars.vcom(self.ts[0])[i] == initial_state.vcom[i])
-            for k in range(num_limbs):
-                self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
-                self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
 
     def add_costs(self, desired_state):
         num_limbs = len(self.robot.limb_bounds)
