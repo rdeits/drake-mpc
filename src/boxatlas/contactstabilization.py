@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 from itertools import islice, chain
+from collections import namedtuple
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from pydrake.solvers.gurobi import GurobiSolver
@@ -8,6 +9,10 @@ from utils.polynomial import Polynomial
 from utils.piecewise import Piecewise
 from utils.trajectory import Trajectory
 from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
+
+
+SolutionData = namedtuple("SolutionData",
+                          ["opt" ,"states", "inputs", "contact_indicator", "ts"])
 
 
 class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
@@ -69,7 +74,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             b = surface.pose_constraints.getB()
             qlimb_after_dt = qlimb.from_below(ts[j + 1])
             for i in range(A.shape[0]):
-                self.AddLinearConstraint((A[i, :].dot(qlimb_after_dt) - (b[i] + Mbig * (1 - contact(t)[0]))) <= 0)
+                self.AddLinearConstraint(A[i, :].dot(qlimb_after_dt) <= b[i] + Mbig * (1 - contact(t)[0]))
 
     def add_contact_force_constraints(self, contact_force, surface, contact, Mbig):
         ts = contact_force.breaks
@@ -93,7 +98,13 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
                 self.AddLinearConstraint((-vlimb(tnext)[i] - (Mbig * (1 - indicator))) <= 0)
 
     def get_piecewise_solution(self, piecewise):
-        return piecewise.map(lambda p: p.map(lambda x: self.GetSolution(x)))
+        def get_solution(x):
+            try:
+                return self.GetSolution(x)
+            except TypeError:
+                return x
+
+        return piecewise.map(lambda p: p.map(lambda x: get_solution(x)))
 
     def extract_solution(self, robot, qcom, qlimb, contact, contact_force):
         qcom = self.get_piecewise_solution(qcom)
@@ -129,7 +140,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
 
 class BoxAtlasVariables(object):
-    def __init__(self, prog, ts, num_limbs, dim):
+    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
         prog.add_continuity_constraints(self.qcom)
         self.vcom = self.qcom.derivative()
@@ -140,13 +151,45 @@ class BoxAtlasVariables(object):
         for q in self.qlimb:
             prog.add_continuity_constraints(q)
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
-        self.contact = [prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary") for k in range(num_limbs)]
+
+        if contact_assignments is None:
+            contact_assignments = [None for i in range(num_limbs)]
+        assert len(contact_assignments) == num_limbs
+        self.contact = []
+        for c in contact_assignments:
+            if c is None:
+                self.contact.append(prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary"))
+            else:
+                self.contact.append(c)
+
+    def all_state_variables(self):
+        x = []
+        for j in range(len(self.qcom.functions)):
+            xj = np.hstack([np.hstack(self.qcom.functions[j].coeffs[:-1])] +
+                           [np.hstack(q.functions[j].coeffs[:-1]) for q in self.qlimb])
+            x.append(xj)
+        return np.vstack(x).T
+
+    def all_input_variables(self):
+        u = []
+        for j in range(len(self.qcom.functions)):
+            uj = np.hstack([np.hstack(self.qcom.functions[j].coeffs[-1:])] +
+                           [np.hstack(q.functions[j].coeffs[-1:]) for q in self.qlimb] +
+                           [np.hstack(f.functions[j].coeffs) for f in self.contact_force])
+            u.append(uj)
+        return np.vstack(u).T
+
+
+
+
 
 
 class BoxAtlasContactStabilization(object):
-    def __init__(self, initial_state, env,
+    def __init__(self, initial_state, env, desired_state,
                  dt=0.05,
-                 num_time_steps=20, params=None):
+                 num_time_steps=20,
+                 params=None,
+                 contact_assignments=None):
 
         # load the parameters
         if params is None:
@@ -163,9 +206,10 @@ class BoxAtlasContactStabilization(object):
         self.env = env
         self.prog = MixedIntegerTrajectoryOptimization()
         num_limbs = len(self.robot.limb_bounds)
-        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim)
+        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
+                                      contact_assignments)
         self.add_constraints(initial_state)
-        self.add_costs()
+        self.add_costs(desired_state)
 
     def add_constraints(self, initial_state, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
@@ -192,6 +236,10 @@ class BoxAtlasContactStabilization(object):
                                                 self.robot.limb_bounds[k])
             # switches = self.prog.count_contact_switches(self.vars.contact[k])
             # self.prog.AddLinearConstraint(switches <= 2)
+        # for k in [1, 2]:
+        #     for t in self.vars.qlimb[k].breaks[:-1]:
+        #         self.prog.AddLinearConstraint(self.vars.contact[k](t)[0] == 1)
+        #         # self.prog.AddLinearConstraint(self.vars.qlimb[k](t)[1] >= 0.0 * (1 - self.vars.contact[k](t)[0]))
 
         A = self.env.free_space.getA()
         b = self.env.free_space.getB()
@@ -212,7 +260,7 @@ class BoxAtlasContactStabilization(object):
                 # self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
                 self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
 
-    def add_costs(self):
+    def add_costs(self, desired_state):
         num_limbs = len(self.robot.limb_bounds)
         cost_weights = self.params['costs']
         self.prog.AddQuadraticCost(
@@ -220,33 +268,36 @@ class BoxAtlasContactStabilization(object):
 
 
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - np.array([0, 1]), 2)) for q in self.vars.qcom.at_all_breaks()))
+            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - desired_state.qcom, 2)) for q in self.vars.qcom.at_all_breaks()))
+
+        self.prog.AddQuadraticCost(
+            cost_weights['vcom_running'] * np.sum([np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
 
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - np.array([0, 1]), 2)))
+            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - desired_state.qcom, 2)))
         self.prog.AddQuadraticCost(
-            cost_weights['vcom_final'] * np.sum(np.power(vcomf - np.array([0, 0]), 2)))
+            cost_weights['vcom_final'] * np.sum(np.power(vcomf - desired_state.vcom, 2)))
 
 
-        # limb final position consts
+        # limb final position costs
         qlimbf = [self.vars.qlimb[k].from_below(self.ts[-1]) for k in range(num_limbs)]
         right_arm_idx = self.robot.limb_idx_map["right_arm"]
         right_leg_idx = self.robot.limb_idx_map["right_leg"]
         left_arm_idx = self.robot.limb_idx_map["left_arm"]
         left_leg_idx = self.robot.limb_idx_map["left_leg"]
 
-        # final position costs for arms
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] *  np.sum(np.power(qlimbf[right_arm_idx] - (qcomf + np.array([0.75,0]) ),2) ) )
-        self.prog.AddQuadraticCost(cost_weights["arm_final_position"] * np.sum(
-            np.power(qlimbf[left_arm_idx] - (qcomf + np.array([-0.75, 0])), 2)))
+        self.prog.AddQuadraticCost(
+            cost_weights["arm_final_position"] * np.sum(np.power(qlimbf[right_arm_idx] - desired_state.qlimb[right_arm_idx], 2)))
+        self.prog.AddQuadraticCost(
+            cost_weights["arm_final_position"] * np.sum(np.power(qlimbf[left_arm_idx] - desired_state.qlimb[left_arm_idx], 2)))
 
         # final position costs for legs
         self.prog.AddQuadraticCost(
-            cost_weights['leg_final_position'] * (qlimbf[right_leg_idx][0] - (qcomf[0] + 0.25)) ** 2)
+            cost_weights['leg_final_position'] * np.sum(np.power(qlimbf[right_leg_idx] - desired_state.qlimb[right_leg_idx], 2)))
         self.prog.AddQuadraticCost(
-            cost_weights['leg_final_position'] * (qlimbf[left_leg_idx][0] - (qcomf[0] - 0.25)) ** 2)
+            cost_weights['leg_final_position'] * np.sum(np.power(qlimbf[left_leg_idx] - desired_state.qlimb[left_leg_idx], 2)))
 
         self.add_contact_velocity_cost(self.params['costs']['limb_velocity'])
 
@@ -269,11 +320,12 @@ class BoxAtlasContactStabilization(object):
         result = solver.Solve(self.prog)
         print(result)
         assert result == mp.SolutionResult.kSolutionFound
-        return self.prog.extract_solution(self.robot,
-                                          self.vars.qcom,
-                                          self.vars.qlimb,
-                                          self.vars.contact,
-                                          self.vars.contact_force)
+        states, inputs, contact = self.prog.extract_solution(
+            self.robot, self.vars.qcom, self.vars.qlimb,
+            self.vars.contact, self.vars.contact_force)
+        ts = states.components[0].breaks
+        return SolutionData(opt=self, states=states, inputs=inputs,
+                            contact_indicator=contact, ts=ts)
 
     @staticmethod
     def get_optimization_parameters():
@@ -283,11 +335,11 @@ class BoxAtlasContactStabilization(object):
         params['costs'] = dict()
         params['costs']['contact_force'] = 1e-2
         params['costs']['qcom_running'] = 1e3
+        params['costs']['vcom_running'] = 1e-3
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
-        params['costs']['leg_final_position'] = 1e4
         params['costs']['limb_velocity'] = 1e-1
-
+        params['costs']['leg_final_position'] = 1e2
         return params
 

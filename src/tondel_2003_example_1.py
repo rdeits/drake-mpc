@@ -23,6 +23,7 @@ def objective_matrix(prog, vars, params):
 
     v_inds = np.array([prog.FindDecisionVariableIndex(v) for v in vars])
     H = H[v_inds, v_inds.reshape((-1, 1))]
+    # TODO: 0.5 * (H + H.T) ??
     H = H + H.T - np.diag(np.diag(H))
     return H
 
