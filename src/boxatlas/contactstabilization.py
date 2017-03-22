@@ -61,10 +61,17 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
     def add_no_force_at_distance_constraints(self, contact, contact_force, Mbig):
         ts = contact.breaks
         dim = contact_force(ts[0]).size
+        import pdb; pdb.set_trace()
         for t in ts[:-1]:
-            for i in range(dim):
-                self.AddLinearConstraint((contact_force(t)[i] - (Mbig * contact(t)[0])) <= 0)
-                self.AddLinearConstraint((-contact_force(t)[i] - (Mbig * contact(t)[0])) <= 0)
+            if contact(t).dtype == np.object:
+                for i in range(dim):
+                    self.AddLinearConstraint((contact_force(t)[i] - (Mbig * contact(t)[0])) <= 0)
+                    self.AddLinearConstraint((-contact_force(t)[i] - (Mbig * contact(t)[0])) <= 0)
+            else:
+                c = bool(round(contact(t)[0]))
+                if not c:
+                    for i in range(dim):
+                        self.AddLinearConstraint(contact_force(t)[i] == 0)
 
     def add_contact_surface_constraints(self, qlimb, surface, contact, Mbig):
         ts = qlimb.breaks
@@ -73,8 +80,14 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             A = surface.pose_constraints.getA()
             b = surface.pose_constraints.getB()
             qlimb_after_dt = qlimb.from_below(ts[j + 1])
-            for i in range(A.shape[0]):
-                self.AddLinearConstraint(A[i, :].dot(qlimb_after_dt) <= b[i] + Mbig * (1 - contact(t)[0]))
+            if contact(t).dtype == np.object:
+                for i in range(A.shape[0]):
+                    self.AddLinearConstraint(A[i, :].dot(qlimb_after_dt) <= b[i] + Mbig * (1 - contact(t)[0]))
+            else:
+                c = bool(round(contact(t)[0]))
+                if c:
+                    for i in range(A.shape[0]):
+                        self.AddLinearConstraint(A[i, :].dot(qlimb_after_dt) <= b[i])
 
     def add_contact_force_constraints(self, contact_force, surface, contact, Mbig):
         ts = contact_force.breaks
