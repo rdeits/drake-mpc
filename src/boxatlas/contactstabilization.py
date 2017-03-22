@@ -204,10 +204,6 @@ class BoxAtlasVariables(object):
         return np.vstack(u).T
 
 
-
-
-
-
 class BoxAtlasContactStabilization(object):
     def __init__(self, initial_state, env, desired_state,
                  dt=0.05,
@@ -272,6 +268,28 @@ class BoxAtlasContactStabilization(object):
         #     for t in self.vars.qlimb[k].breaks[:-1]:
         #         self.prog.AddLinearConstraint(self.vars.contact[k](t)[0] == 1)
         #         # self.prog.AddLinearConstraint(self.vars.qlimb[k](t)[1] >= 0.0 * (1 - self.vars.contact[k](t)[0]))
+
+        for f in chain(*[fl.at_all_breaks() for fl in self.vars.contact_force]):
+            for i in range(self.dim):
+                self.prog.AddLinearConstraint(f[i] <= Mf)
+                self.prog.AddLinearConstraint(f[i] >= -Mf)
+
+        for q in chain(self.vars.qcom.at_all_breaks(),
+                       *[ql.at_all_breaks() for ql in self.vars.qlimb]):
+            for i in range(self.dim):
+                self.prog.AddLinearConstraint(q[i] <= 10)
+                self.prog.AddLinearConstraint(q[i] >= -10)
+
+        for v in chain(self.vars.qcom.derivative().at_all_breaks(),
+                       *[ql.derivative().at_all_breaks() for ql in self.vars.qlimb]):
+            for i in range(self.dim):
+                self.prog.AddLinearConstraint(v[i] <= Mv)
+                self.prog.AddLinearConstraint(v[i] >= -Mv)
+
+        for a in self.vars.qcom.derivative().derivative().at_all_breaks():
+            for i in range(self.dim):
+                self.prog.AddLinearConstraint(a[i] <= Mf)
+                self.prog.AddLinearConstraint(a[i] >= -Mf)
 
         A = self.env.free_space.getA()
         b = self.env.free_space.getB()
