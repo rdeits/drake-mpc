@@ -256,6 +256,22 @@ class BoxAtlasContactStabilization(object):
                 switches[k] = self.prog.count_contact_switches(self.vars.contact[k])
                 self.prog.AddLinearConstraint(switches[k] <= max_num_switches)
 
+    def add_one_foot_on_ground_constraint(self):
+        """
+        Enforces that at least one foot be on the ground at all times
+        :return: None
+        """
+        left_leg_idx = self.robot.limb_idx_map["left_leg"]
+        right_leg_idx = self.robot.limb_idx_map["right_leg"]
+
+        for t in self.ts[:-1]:
+            left_leg_contact = self.vars.contact[left_leg_idx](t)
+            right_leg_contact = self.vars.contact[right_leg_idx](t)
+
+            # only add this constraint if at least one of these is an object
+            if (left_leg_contact.dtype == object) or (right_leg_contact.dtype == object):
+                self.prog.AddLinearConstraint(left_leg_contact[0] + right_leg_contact[0] >= 1)
+
 
     def add_constraints(self, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
