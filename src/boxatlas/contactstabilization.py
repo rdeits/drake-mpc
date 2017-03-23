@@ -82,7 +82,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             A = surface.force_constraints.getA()
             b = surface.force_constraints.getB()
             for i in range(A.shape[0]):
-                self.AddLinearConstraint((A[i, :].dot(contact_force(t)) - (b[i] + Mbig * (1 - contact(t)[0]))) <= 0)
+                self.AddLinearConstraint((A[i, :].dot(contact_force(t)) - b[i]) <= 0)
 
     def add_contact_velocity_constraints(self, qlimb, contact, Mbig):
         ts = qlimb.breaks
