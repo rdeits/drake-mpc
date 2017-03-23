@@ -142,6 +142,9 @@ class Affine(object):
         self.A = A
         self.b = b
 
+    def copy(self):
+        return Affine(self.A.copy(), self.b.copy())
+
 
 class SimpleQuadraticProgram(object):
     """
@@ -305,7 +308,7 @@ class SimpleQuadraticProgram(object):
         vhat = -np.linalg.inv(Hhat).T.dot(fhat)
         v = np.zeros(self.f.shape)
         v[nonzero_mask] = vhat
-        assert np.allclose(self.H.T.dot(v) + self.f, 0)
+        assert np.allclose(self.H.T.dot(v) + self.f, 0, atol=1e-6)
         # v = -np.linalg.inv(self.H).T.dot(self.f)
         return self.affine_variable_substitution(U, v)
 
@@ -335,6 +338,56 @@ class SimpleQuadraticProgram(object):
         new_program.d = new_program.d[mask]
         return new_program, preserved
 
+    def convert_double_inequalities_to_equalities(self):
+        """
+        Returns a new quadratic program with all double-sided inequalities:
+            a'x <= b AND a'x >= b
+        converted to equalities:
+            a'x == b
+        """
+
+        qp = self.copy()
+        to_delete = np.zeros(qp.A.shape[0], dtype=np.bool)
+        C_new = []
+        d_new = []
+        for i in range(qp.A.shape[0]):
+            vi = np.hstack((qp.A[i, :], qp.b[i]))
+            if np.linalg.norm(vi) == 0:
+                continue
+            vi /= np.linalg.norm(vi)
+            for j in range(i + 1, qp.A.shape[0]):
+                vj = np.hstack((qp.A[j, :], qp.b[j]))
+                if np.linalg.norm(vj) == 0:
+                    continue
+                vj /= np.linalg.norm(vj)
+                if np.allclose(vi, -vj):
+                    to_delete[i] = True
+                    to_delete[j] = True
+                    C_new.append(vi[:-1])
+                    d_new.append(vi[-1])
+        qp.A = qp.A[np.logical_not(to_delete), :]
+        qp.b = qp.b[np.logical_not(to_delete)]
+        if C_new:
+            qp.C = np.vstack((qp.C, np.vstack(C_new)))
+            qp.d = np.hstack((qp.d, np.hstack(d_new)))
+        return qp
+
+    def eliminate_trivial_inequalities(self, tol=1e-7):
+        """
+        Returns a new quadratic program with all trivial inequality
+        constraints (of the form: a'x <= b where a == 0 and b == 0)
+        removed.
+        """
+        qp = self.copy()
+        to_delete = np.zeros(qp.A.shape[0], dtype=np.bool)
+        for i in range(qp.A.shape[0]):
+            if np.linalg.norm(qp.A[i, :]) <= tol:
+                assert qp.b[i] >= -10 * tol, "Constraint appears to be trivially infeasible: a: {}, b: {}".format(qp.A[i, :], qp.b[i])
+                to_delete[i] = True
+        qp.A = qp.A[np.logical_not(to_delete), :]
+        qp.b = qp.b[np.logical_not(to_delete)]
+        return qp
+
     def eliminate_redundant_inequalities(self):
         """
         Returns a new quadratic program with all redundant inequality
@@ -351,6 +404,12 @@ class SimpleQuadraticProgram(object):
                                              self.C, self.d,
                                              self.T)
         return new_program
+
+    def copy(self):
+        return SimpleQuadraticProgram(self.H.copy(), self.f.copy(),
+                                      self.A.copy(), self.b.copy(),
+                                      self.C.copy(), self.d.copy(),
+                                      T=self.T.copy())
 
     def permute_variables(self, new_order):
         """
@@ -435,6 +494,8 @@ class CanonicalMPCQP(object):
         x_mask[nu:] = True
 
         qp = SimpleQuadraticProgram.from_mathematicalprogram(prog)
+        qp = qp.convert_double_inequalities_to_equalities()
+
         order = mpc_order(prog, u, x)
         qp = qp.permute_variables(order)
 
@@ -444,9 +505,17 @@ class CanonicalMPCQP(object):
         assert sum(u_mask) + sum(x_mask) == qp.A.shape[1]
 
         qp = qp.transform_goal_to_origin()
+
+        # print "A"
+        # print qp.A
+        # print "b"
+        # print qp.b
+
+        qp = qp.eliminate_trivial_inequalities()
+
         qp = qp.eliminate_redundant_inequalities()
-        assert np.allclose(qp.f, 0)
-        assert np.allclose(qp.C, 0)
+        assert np.allclose(qp.f, 0, atol=1e-6)
+        assert np.allclose(qp.C, 0, atol=1e-6)
 
         H = qp.H[u_mask, :][:, u_mask]
         F = qp.H[x_mask, :][:, u_mask]
@@ -456,6 +525,15 @@ class CanonicalMPCQP(object):
         W = qp.b.reshape((-1, 1))
         E = -qp.A[:, x_mask]
         return CanonicalMPCQP(H, F, Q, G, W, E, qp.T)
+
+    def eliminate_state_constraints(self, tol=1e-7):
+        to_delete = np.zeros(self.G.shape[0], dtype=np.bool)
+        for i in range(self.G.shape[0]):
+            if np.linalg.norm(self.G[i, :]) <= tol:
+                to_delete[i] = True
+        self.G = self.G[np.logical_not(to_delete), :]
+        self.W = self.W[np.logical_not(to_delete), :]
+        self.E = self.E[np.logical_not(to_delete), :]
 
     def to_simple_qp(self):
         nu = self.G.shape[1]
