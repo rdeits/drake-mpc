@@ -1,4 +1,4 @@
-module nnls
+module NNLS
 
 function construct_householder!(u::AbstractVector, up)
     m = length(u)
@@ -9,15 +9,18 @@ function construct_householder!(u::AbstractVector, up)
     cl = maximum(abs, u)
     @assert cl > 0
     clinv = 1 / cl
-    sm = sum(x -> (x * clinv)^2, u)
+    sm = zero(eltype(u))
+    for ui in u
+        sm += (ui * clinv)^2
+    end
     cl *= sqrt(sm)
     if u[1] > 0
         cl = -cl
     end
-    up = u[1] - cl
+    result = u[1] - cl
     u[1] = cl
     
-    return up
+    return result
 end
 
 function apply_householder!{T}(u::AbstractVector{T}, up::T, c::AbstractVector{T})
@@ -52,7 +55,7 @@ function apply_householder!{T}(u::AbstractVector{T}, up::T, c::AbstractVector{T}
     end
 end
 
-function orthogonal_rotmat(a, b)
+function orthogonal_rotmat{T}(a::T, b::T)
     if abs(a) > abs(b)
         xr = b / a
         yr = sqrt(1 + xr^2)
@@ -66,32 +69,49 @@ function orthogonal_rotmat(a, b)
         c = s * xr
         sig = abs(b) * yr
     else
-        sig = 0
-        c = 0
-        s = 1
+        sig = zero(T)
+        c = zero(T)
+        s = one(T)
     end
     return c, s, sig
 end
 
-immutable NNLSWorkspace{T}
+immutable NNLSWorkspace{T, I <: Integer}
     x::Vector{T}
     w::Vector{T}
     zz::Vector{T}
-    idx::Vector{Cint}
+    idx::Vector{I}
     rnorm::Ref{T}
-    mode::Ref{Cint}
+    mode::Ref{I}
 end
 
 function NNLSWorkspace{T}(::Type{T}, m::Integer, n::Integer)
-    NNLSWorkspace{T}(zeros(T, n),
-                     zeros(T, n),
-                     zeros(T, m),
-                     zeros(Cint, n),
-                     zero(T),
-                     0)
+    NNLSWorkspace{T, Int}(
+        zeros(T, n),
+        zeros(T, n),
+        zeros(T, m),
+        zeros(Int, n),
+        zero(T),
+        0)
 end
 
-function nnls!{T}(work::NNLSWorkspace{T}, A::Matrix{T}, b::Vector{T}, itermax=(3 * size(A, 2)))
+function NNLSWorkspace{T, I <: Integer}(::Type{T}, ::Type{I}, m::Integer, n::Integer)
+    NNLSWorkspace{T, I}(
+        zeros(T, n),
+        zeros(T, n),
+        zeros(T, m),
+        zeros(Int, n),
+        zero(T),
+        0)
+end
+
+function nnls{T}(A::DenseMatrix{T}, b::DenseVector{T}, itermax=(3 * size(A, 2)))
+    work = NNLSWorkspace(T, size(A, 1), size(A, 2))
+    nnls!(work, copy(A), copy(b), itermax)
+    work.x
+end
+
+function nnls!{T}(work::NNLSWorkspace{T}, A::DenseMatrix{T}, b::DenseVector{T}, itermax=(3 * size(A, 2)))
     x = work.x
     w = work.w
     zz = work.zz
@@ -134,7 +154,7 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::Matrix{T}, b::Vector{T}, itermax=(3
         # COMPUTE COMPONENTS OF THE DUAL (NEGATIVE GRADIENT) VECTOR W().
         for iz in iz1:iz2
             j = idx[iz]
-            sm = 0
+            sm = zero(T)
             for l in npp1:m
                 sm += A[l, j] * b[l]
             end
@@ -143,7 +163,7 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::Matrix{T}, b::Vector{T}, itermax=(3
         
         # FIND LARGEST POSITIVE W(J).
         while true
-            wmax = 0
+            wmax = zero(T)
             for iz in iz1:iz2
                 j = idx[iz]
                 if w[j] > wmax
@@ -167,7 +187,7 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::Matrix{T}, b::Vector{T}, itermax=(3
             # NEAR LINEAR DEPENDENCE.
             Asave = A[npp1, j]
             up = construct_householder!(@view(A[npp1:end, j]), up)
-            unorm = 0
+            unorm = zero(T)
             if nsetp != 0
                 for l in 1:nsetp
                     unorm += A[l, j]^2
@@ -348,7 +368,7 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::Matrix{T}, b::Vector{T}, itermax=(3
     # COMPUTE THE NORM OF THE FINAL RESIDUAL VECTOR.
 
     @assert terminated
-    sm = 0
+    sm = zero(T)
     if npp1 <= m
         for i in npp1:m
             sm += b[i]^2
@@ -426,7 +446,7 @@ function g1_reference(a, b)
     return c[], s[], sig[]
 end
 
-function nnls_reference!(work::NNLSWorkspace{Cdouble}, A::DenseMatrix{Cdouble}, b::DenseVector{Cdouble})
+function nnls_reference!(work::NNLSWorkspace{Cdouble, Cint}, A::DenseMatrix{Cdouble}, b::DenseVector{Cdouble})
     m, n = size(A)
     @assert length(work.x) == n
     @assert length(work.w) == n
@@ -450,80 +470,6 @@ function nnls_reference!(work::NNLSWorkspace{Cdouble}, A::DenseMatrix{Cdouble}, 
           work.mode)
     if work.mode[] == 2
         error("nnls.f exited with dimension error")
-    end
-end
-
-using Base.Test
-
-@testset "construct_householder!" begin
-    for i in 1:10000
-        u = randn(rand(3:10))
-        
-        u1 = copy(u)
-        up1 = construct_householder!(u1, 0)
-        
-        u2 = copy(u)
-        up2 = h1_reference!(u2)
-        @test up1 == up2
-        @test u1 == u2
-    end
-end
-
-@testset "apply_householder!" begin
-    for i in 1:1000
-        u = randn(rand(3:10))
-        c = randn(length(u))
-        
-        u1 = copy(u)
-        c1 = copy(c)
-        up1 = construct_householder!(u1, 0)
-        apply_householder!(u1, up1, c1)
-        
-        u2 = copy(u)
-        c2 = copy(c)
-        up2 = h1_reference!(u2)
-        h2_reference!(u2, up2, c2)
-        
-        @test up1 == up2
-        @test u1 == u2
-        @test c1 == c2
-    end
-end
-
-@testset "orthogonal_rotmat" begin
-    for i in 1:1000
-        a = randn()
-        b = randn()
-        @test orthogonal_rotmat(a, b) == g1_reference(a, b)
-    end
-end
-
-@testset "nnls" begin
-    srand(1)
-    for i in 1:1000
-        m = rand(20:100)
-        n = rand(20:100)
-        A = randn(m, n)
-        b = randn(m)
-
-        A1 = copy(A)
-        b1 = copy(b)
-        work1 = NNLSWorkspace(Float64, m, n)
-        nnls!(work1, A1, b1)
-
-        A2 = copy(A)
-        b2 = copy(b)
-        work2 = NNLSWorkspace(Float64, m, n)
-        nnls_reference!(work2, A2, b2)
-
-        @test work1.x == work2.x
-        @test A1 == A2
-        @test b1 == b2
-        @test work1.w == work2.w
-        @test work1.zz == work2.zz
-        @test work1.idx == work2.idx
-        @test work1.rnorm[] == work2.rnorm[]
-        @test work1.mode[] == work2.mode[]
     end
 end
 
