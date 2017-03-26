@@ -25,32 +25,30 @@ end
 
 function apply_householder!{T}(u::AbstractVector{T}, up::T, c::AbstractVector{T})
     m = length(u)
-    if m <= 1
-        return
-    end
-        
-    cl = abs(u[1])
-    @assert cl > 0
-    b = up * u[1]
-    if b >= 0
-        return
-    end
-    b = 1 / b
-    # i2 = 1 - m + lpivot - 1
-    # incr = 1
-    # i2 = lpivot
-    # i3 = lpivot + 1
-    # i4 = lpivot + 1
+    if m > 1
+        cl = abs(u[1])
+        @assert cl > 0
+        b = up * u[1]
+        if b >= 0
+            return
+        end
+        b = 1 / b
+        # i2 = 1 - m + lpivot - 1
+        # incr = 1
+        # i2 = lpivot
+        # i3 = lpivot + 1
+        # i4 = lpivot + 1
 
-    sm = c[1] * up
-    for i in 2:m
-        sm += c[i] * u[i]
-    end
-    if sm != 0
-        sm *= b
-        c[1] += sm * up
+        sm = c[1] * up
         for i in 2:m
-            c[i] += sm * u[i]
+            sm += c[i] * u[i]
+        end
+        if sm != 0
+            sm *= b
+            c[1] += sm * up
+            for i in 2:m
+                c[i] += sm * u[i]
+            end
         end
     end
 end
@@ -104,6 +102,19 @@ function NNLSWorkspace{T, I <: Integer}(::Type{T}, ::Type{I}, m::Integer, n::Int
         zero(T),
         0)
 end
+
+immutable UnsafeVectorView{T} <: AbstractVector{T}
+    offset::Int
+    len::Int
+    ptr::Ptr{T}
+end
+
+UnsafeVectorView{T}(parent::DenseArray{T}, start_ind::Integer, len::Integer) = UnsafeVectorView{T}(start_ind - 1, len, pointer(parent))
+Base.size(v::UnsafeVectorView) = (v.len,)
+Base.getindex(v::UnsafeVectorView, idx) = unsafe_load(v.ptr, idx + v.offset)
+Base.setindex!(v::UnsafeVectorView, value, idx) = unsafe_store!(v.ptr, value, idx + v.offset)
+Base.length(v::UnsafeVectorView) = v.len
+Base.linearindexing{V <: UnsafeVectorView}(::Type{V}) = Base.LinearFast()
 
 function nnls{T}(A::DenseMatrix{T}, b::DenseVector{T}, itermax=(3 * size(A, 2)))
     work = NNLSWorkspace(T, size(A, 1), size(A, 2))
@@ -186,7 +197,10 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::DenseMatrix{T}, b::DenseVector{T}, 
             # BEGIN THE TRANSFORMATION AND CHECK NEW DIAGONAL ELEMENT TO AVOID
             # NEAR LINEAR DEPENDENCE.
             Asave = A[npp1, j]
-            up = construct_householder!(@view(A[npp1:end, j]), up)
+            up = construct_householder!(
+                UnsafeVectorView(A, sub2ind(A, npp1, j), m - npp1 + 1),
+                up)
+            # up = construct_householder!(@view(A[npp1:end, j]), up)
             unorm = zero(T)
             if nsetp != 0
                 for l in 1:nsetp
@@ -200,7 +214,11 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::DenseMatrix{T}, b::DenseVector{T}, 
                 # AND SOLVE FOR ZTEST ( = PROPOSED NEW VALUE FOR X(J) ).   
                 # println("copying b into zz")
                 zz .= b
-                apply_householder!(@view(A[npp1:end, j]), up, @view(zz[npp1:end]))
+                apply_householder!(
+                    UnsafeVectorView(A, sub2ind(A, npp1, j), m - npp1 + 1),
+                    up,
+                    UnsafeVectorView(zz, npp1, m - npp1 + 1))
+                # apply_householder!(@view(A[npp1:end, j]), up, @view(zz[npp1:end]))
                 # print("after h12: ")
                 ztest = zz[npp1] / A[npp1, j]
 
@@ -236,7 +254,11 @@ function nnls!{T}(work::NNLSWorkspace{T}, A::DenseMatrix{T}, b::DenseVector{T}, 
         if iz1 <= iz2
             for jz in iz1:iz2
                 jj = idx[jz]
-                apply_householder!(@view(A[nsetp:end, j]), up, @view(A[nsetp:end, jj]))
+                apply_householder!(
+                    UnsafeVectorView(A, sub2ind(A, nsetp, j), m - nsetp + 1),
+                    up,
+                    UnsafeVectorView(A, sub2ind(A, nsetp, jj), m - nsetp + 1))
+                # apply_householder!(@view(A[nsetp:end, j]), up, @view(A[nsetp:end, jj]))
             end
         end
 
