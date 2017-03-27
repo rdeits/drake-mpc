@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.linalg as linalg
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 import itertools
 import time
 from utils.ndpiecewise import NDPiecewise
@@ -203,38 +204,6 @@ class DTLinearSystem:
         sys = DTLinearSystem(A_d, B_d)
         return sys
 
- # class DTPWASystem:
-
- #    def __init__(self, A_list, B_list, S_list, R_list, T_list):
- #        self.n_systems = len(A_list)
- #        if len(B_list) != self.n_systems or len(S_list) != self.n_systems or len(R_list) != self.n_systems or len(T_list) != self.n_systems:
- #            raise ValueError('Inconsistent input dimensions')
- #        self.A_list = A_list
- #        self.B_list = B_list
- #        self.S_list = S_list
- #        self.R_list = R_list
- #        self.T_list = T_list
- #        self.check_intersections()
- #        return
-
- #    def check_intersections(self):
- #        for i in range(0, self.n_systems):
- #            lhs_i = np.hstack(S_list[i], R_list[i])
- #            rhs_i = T_list[i]
- #            polytope_i = Polytope(lhs_i, rhs_i)
- #            for j in range(0, i):
- #                lhs_j = np.hstack(S_list[j], R_list[j])
- #                rhs_j = T_list[j]
- #                intersection_ij = polytope_i.check_intersection_with(lhs_j, rhs_j)
- #                if intersection_ij:
- #                    raise ValueError('Non-empty intersection of two domains')
- #        return
-
- #    def join_domains(self):
- #        return
-
-
-
 class MPCController:
 
     def __init__(self, canonical_qp, n_u):
@@ -304,7 +273,7 @@ class MPCController:
                     else:
                         print('LICQ does not hold for the active set ' + str(active_set))
                         active_set = self.active_set_if_not_licq(active_set, facet_index, cr)
-                        if active_set:
+                        if active_set and active_set not in tested_active_sets:
                             print('    corrected active set ' + str(active_set))
                             cr_to_be_explored.append(CriticalRegion(active_set, self.qp))
                         else:
@@ -339,6 +308,7 @@ class MPCController:
         return active_set
 
     def solve_qp_beyond_facet(self, facet_index, cr, dist=1e-8, toll=1.e-6):
+
         """
         Solves a QP a step of length "dist" beyond the facet wich index is "facet_index"
         to determine the active set in that region.
@@ -350,6 +320,9 @@ class MPCController:
         OUTPUTS:
             active_set: real active set of the child critical region ([] if the region is unfeasible)
         """
+        
+        # relate step distance with polytope dimensions
+        dist = min(cr.polytope.facet_radii(facet_index)/100., cr.polytope.radius/100., dist)
 
         # relates step length to polytope dimension
         dist = min(dist, cr.polytope.radius, cr.polytope.facet_radii(facet_index))
@@ -420,23 +393,162 @@ class MPCController:
 
         # derive explicit solution
         if cr_where_x0 is not None:
-            z = cr_where_x0.z_optimal(x0)
-            u_feedforward = z - np.linalg.inv(self.qp.H).dot(self.qp.F.T.dot(x0))
+            u_feedforward = cr_where_x0.u_offset + cr_where_x0.u_linear.dot(x0)
 
         # if unfeasible return nan
         else:
-            print('Unfeasible initial condition x_0 = ' + str(x0.tolist()))
+            #print('Unfeasible initial condition x_0 = ' + str(x0.tolist()))
             u_feedforward = np.zeros((self.qp.G.shape[1], 1))
             u_feedforward[:] = np.nan
 
         return u_feedforward
 
     def feedback_explicit(self, x0):
-
         # select only the first control of the feedforward
         u_feedback = self.feedforward_explicit(x0)[0:self.n_u]
-
         return u_feedback
+
+    def optimal_value_function(self, x0):
+
+        # check that the explicit solution is available
+        if self.critical_regions is None:
+            raise ValueError('Explicit solution not computed yet! First run .compute_explicit_solution() ...')
+
+        # find the CR to which the given state belongs
+        cr_where_x0 = self.critical_regions.lookup(x0)
+
+        # derive explicit solution
+        if cr_where_x0 is not None:
+            V = cr_where_x0.V_offset + cr_where_x0.V_linear.dot(x0) + .5*x0.T.dot(cr_where_x0.V_quadratic).dot(x0)
+            V = V[0]
+        else:
+            V = np.nan
+
+        return V
+
+    def merge_critical_regions(self):
+        self.u_offset_list = []
+        self.u_linear_list = []
+        self.cr_families = []
+        for cr in self.critical_regions:
+            cr_family = np.where(np.isclose(cr.u_offset[0], self.u_offset_list))[0]
+            if cr_family and all(np.isclose(cr.u_linear[0,:], self.u_linear_list[cr_family[0]])):
+                self.cr_families[cr_family[0]].append(cr)
+            else:
+                self.cr_families.append([cr])
+                self.u_offset_list.append(cr.u_offset[0])
+                self.u_linear_list.append(cr.u_linear[0,:])
+        print 'Critical regions merged in ', str(len(self.cr_families)), ' sets.'
+        return
+
+
+    def plot_merged_state_partition(self):
+        self.merge_critical_regions()
+        # print self.qp.G
+        colors = ['b','g','r','c','m','y']*len(self.cr_families)
+        plt.figure()
+        for i, family in enumerate(self.cr_families):
+            for cr in family:
+                cr.polytope.plot(color=colors[i])
+
+
+
+        #         plt.text(cr.polytope.center[0], cr.polytope.center[1], str(cr.active_set))
+        #         for j in range(0, len(cr.polytope.minimal_facets)):
+        #             plt.text(cr.polytope.facet_centers(j)[0], cr.polytope.facet_centers(j)[1], str(cr.polytope.minimal_facets[j]))
+        # for family in self.cr_families:
+        #     for cr in family:
+        #         x0a = -.5
+        #         x0b = .5
+
+        #         if cr.active_set == [11,13,15,17,19]:
+        #             # y0a = (cr.polytope.b[0]-cr.polytope.A[0,0]*x0a)/cr.polytope.A[0,1]
+        #             # y0b = (cr.polytope.b[0]-cr.polytope.A[0,0]*x0b)/cr.polytope.A[0,1]
+        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
+        #             # print cr.polytope.b[0],cr.polytope.A[0,:]
+
+        #             # # plt.plot([.47,.47],[-1.5,.5],'black')
+        #             y0a = (cr.polytope.b[1]-cr.polytope.A[1,0]*x0a)/cr.polytope.A[1,1]
+        #             y0b = (cr.polytope.b[1]-cr.polytope.A[1,0]*x0b)/cr.polytope.A[1,1]
+        #             plt.plot([x0a,x0b],[y0a,y0b], 'black')
+        #             #print cr.polytope.b[1],cr.polytope.A[1,:]
+
+        #             # y0a = (cr.polytope.b[10]-cr.polytope.A[10,0]*x0a)/cr.polytope.A[10,1]
+        #             # y0b = (cr.polytope.b[10]-cr.polytope.A[10,0]*x0b)/cr.polytope.A[10,1]
+        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
+        #             print cr.polytope.b[10],cr.polytope.A[10,:]
+
+        #             y0a = (cr.polytope.b[11]-cr.polytope.A[11,0]*x0a)/cr.polytope.A[11,1]
+        #             y0b = (cr.polytope.b[11]-cr.polytope.A[11,0]*x0b)/cr.polytope.A[11,1]
+        #             plt.plot([x0a,x0b],[y0a,y0b], 'black')
+        #             #print cr.polytope.b[11],cr.polytope.A[11,:]
+
+        #             # y0a = -1.5
+        #             # y0b = 1.5
+        #             # x0a = (cr.polytope.b[10]-cr.polytope.A[10,1]*y0a)/cr.polytope.A[10,0]
+        #             # x0b = (cr.polytope.b[10]-cr.polytope.A[10,1]*y0b)/cr.polytope.A[10,0]
+        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
+        # # plt.savefig('figures/act_set_2.pdf')
+
+
+
+        return
+
+
+    def plot_state_partition(self):
+        colors = ['b','g','r','c','m','y']*len(self.critical_regions)
+        plt.figure()
+        for i, cr in enumerate(self.critical_regions):
+            cr.polytope.plot(color=colors[i])
+            #plt.savefig('/Users/tobia/Google Drive/UNIPI/PhD/box_atlas/presentation/figures/cr' + str(i+2) + '.pdf')
+        return
+
+    def plot_optimal_control_law(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        vertices = np.zeros((0,2))
+        for cr in self.critical_regions:
+            vertices = np.vstack((vertices, cr.polytope.vertices))
+        x_max = max([vertex[0] for vertex in vertices])
+        x_min = min([vertex[0] for vertex in vertices])
+        y_max = max([vertex[1] for vertex in vertices])
+        y_min = min([vertex[1] for vertex in vertices])
+        x = np.arange(x_min, x_max, (x_max-x_min)/100.)
+        y = np.arange(y_min, y_max, (y_max-y_min)/100.)
+        X, Y = np.meshgrid(x, y)
+        zs = np.array([self.feedback_explicit(np.array([[x],[y]])) for x,y in zip(np.ravel(X), np.ravel(Y))])
+        Z = zs.reshape(X.shape)
+        ax.plot_surface(X, Y, Z)
+        ax.set_xlabel(r'$x_1$')
+        ax.set_ylabel(r'$x_2$')
+        ax.set_zlabel(r'$u^*_0$')
+        return
+
+    def plot_optimal_value_function(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        vertices = np.zeros((0,2))
+        for cr in self.critical_regions:
+            vertices = np.vstack((vertices, cr.polytope.vertices))
+        x_max = max([vertex[0] for vertex in vertices])
+        x_min = min([vertex[0] for vertex in vertices])
+        y_max = max([vertex[1] for vertex in vertices])
+        y_min = min([vertex[1] for vertex in vertices])
+        x = np.arange(x_min, x_max, (x_max-x_min)/100.)
+        y = np.arange(y_min, y_max, (y_max-y_min)/100.)
+        X, Y = np.meshgrid(x, y)
+        zs = np.array([self.optimal_value_function(np.array([[x],[y]])) for x,y in zip(np.ravel(X), np.ravel(Y))])
+        Z = zs.reshape(X.shape)
+        ax.plot_surface(X, Y, Z)
+        ax.set_xlabel(r'$x_1$')
+        ax.set_ylabel(r'$x_2$')
+        ax.set_zlabel(r'$V^*$')
+        return
+
+
+        
+
+
 
     @staticmethod
     def licq_check(G, active_set, max_cond=1e9):
@@ -479,10 +591,10 @@ class CriticalRegion:
             active sets that can be found crossing the ith minimal facet of the polyhedron
         z_linear: linear term in the piecewise affine primal solution z_opt = z_linear*x + z_offset
         z_offset: offset term in the piecewise affine primal solution z_opt = z_linear*x + z_offset
-        lambda_A_linear: linear term in the piecewise affine dual solution (only active multipliers)
-            lambda_A = lambda_A_linear*x + lambda_A_offset
-        lambda_A_offset: offset term in the piecewise affine dual solution (only active multipliers)
-            lambda_A = lambda_A_linear*x + lambda_A_offset
+        u_linear: linear term in the piecewise affine primal solution u_opt = u_linear*x + u_offset
+        u_offset: offset term in the piecewise affine primal solution u_opt = u_linear*x + u_offset
+        lambda_A_linear: linear term in the piecewise affine dual solution (only active multipliers) lambda_A = lambda_A_linear*x + lambda_A_offset
+        lambda_A_offset: offset term in the piecewise affine dual solution (only active multipliers) lambda_A = lambda_A_linear*x + lambda_A_offset
     """
 
     def __init__(self, active_set, qp):
@@ -502,7 +614,7 @@ class CriticalRegion:
         minimal_coincident_facets = [self.polytope.coincident_facets[i] for i in self.polytope.minimal_facets]
         self.candidate_active_sets = self.candidate_active_sets(active_set, minimal_coincident_facets)
 
-        # detect weakly active constraints
+        # find weakly active constraints
         self.find_weakly_active_constraints()
 
         # expand the candidates if there are weakly active constraints
@@ -526,6 +638,16 @@ class CriticalRegion:
         # primal variables explicit solution
         self.z_offset = - qp.H_inv.dot(G_A.T.dot(self.lambda_A_offset))
         self.z_linear = - qp.H_inv.dot(G_A.T.dot(self.lambda_A_linear))
+
+        # primal original variables explicit solution
+        self.u_offset = self.z_offset
+        self.u_linear = self.z_linear - np.linalg.inv(qp.H).dot(qp.F.T)
+
+        # optimal value function explicit solution
+        # V = .5*u_feedforward.T.dot(self.qp.H.dot(u_feedforward)) + x0.T.dot(self.qp.F.dot(u_feedforward)) + .5*x0.T.dot(self.qp.Q).dot(x0)
+        self.V_offset = .5*self.u_offset.T.dot(qp.H).dot(self.u_offset)
+        self.V_linear = self.u_offset.T.dot(qp.H).dot(self.u_linear) + self.u_offset.T.dot(qp.F.T)
+        self.V_quadratic = self.u_linear.T.dot(qp.H).dot(self.u_linear) + qp.Q + 2.*qp.F.dot(self.u_linear)
 
         # equation (12) (modified: only inactive indices considered)
         lhs_type_1 = G_I.dot(self.z_linear) - S_I
@@ -671,4 +793,3 @@ class CriticalRegion:
         is_inside = np.max(self.polytope.lhs_min.dot(x) - self.polytope.rhs_min) <= 0
 
         return is_inside
-
