@@ -269,7 +269,7 @@ class BoxAtlasContactStabilization(object):
             right_leg_contact = self.vars.contact[right_leg_idx](t)
 
             # only add this constraint if at least one of these is an object
-            if (left_leg_contact.dtype == object) or (right_leg_contact.dtype == object):
+            if (left_leg_contact.dtype == np.object) or (right_leg_contact.dtype == np.object):
                 self.prog.AddLinearConstraint(left_leg_contact[0] + right_leg_contact[0] >= 1)
 
 
@@ -386,6 +386,23 @@ class BoxAtlasContactStabilization(object):
             cost_weights['vcom_running'] * np.sum(
                 [np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
 
+    def add_limb_running_costs(self, desired_state):
+        weight = self.params['costs']['limb_running']
+        qcom = self.vars.qcom
+        dt = self.dt
+        ts = qcom.breaks
+
+        num_limbs = len(self.vars.qlimb)
+
+        for limb_idx in xrange(0, num_limbs):
+            limb_com_desired = desired_state.qlimb[limb_idx] - desired_state.qcom
+            qlimb = self.vars.qlimb[limb_idx]
+            for j in range(len(ts) - 1):
+                limb_com = qlimb(ts[j]) - qcom(ts[j])
+
+                self.prog.AddQuadraticCost(weight*np.sum(np.power(limb_com - limb_com_desired, 2)))
+
+
     def add_contact_velocity_cost(self, weight):
         qcom = self.vars.qcom
         dt = self.dt
@@ -422,7 +439,8 @@ class BoxAtlasContactStabilization(object):
         params['costs'] = dict()
         params['costs']['contact_force'] = 1e-2
         params['costs']['qcom_running'] = 1e3
-        params['costs']['vcom_running'] = 1e-3
+        params['costs']['vcom_running'] = 1e3
+        params['costs']['limb_running'] = 1
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
