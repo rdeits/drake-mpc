@@ -206,6 +206,47 @@ class BoxAtlasVariables(object):
         return np.vstack(u).T
 
 
+class BoxAtlasContactFormulation(object):
+    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
+        pass
+
+    @staticmethod
+    def enumerateContactSequences(num_time_steps, initial_contact_state):
+        """
+        Enumerates all the potential "good" contact sequences, i.e. at most one
+        contact switch
+        :param num_time_steps:
+        :param initial_contact_state: whether we are in contact or not at first timestep
+        :return: List of np.array, each one is a potential contact sequence
+        """
+
+        def getOtherContactState(x):
+            if x==0:
+                return 1
+            elif x==1:
+                return 0
+            else:
+                raise ValueError("x must be 0 or 1")
+
+        other_contact_state = getOtherContactState(initial_contact_state)
+
+        # initialize contact sequence list
+        contact_sequence_list = []
+
+        # add sequence which just stays the as the initial_contact_state for all time
+        # this one is a corner case
+        contact_sequence_list.append(initial_contact_state* np.ones(num_time_steps, dtype=int))
+
+        for i in xrange(1,num_time_steps):
+            for j in xrange(1, num_time_steps + 1 - i):
+                print("(i,j) = (%s, %s)" % (i,j))
+                cs = initial_contact_state*np.ones(num_time_steps, dtype=int)
+                cs[i:i+j] = other_contact_state
+                contact_sequence_list.append(cs)
+
+        return contact_sequence_list
+
+
 class BoxAtlasContactStabilization(object):
     def __init__(self, initial_state, env, desired_state,
                  dt=0.05,
@@ -220,6 +261,7 @@ class BoxAtlasContactStabilization(object):
             self.params = params
 
         self.robot = desired_state.robot
+        self.num_time_steps = num_time_steps
         time_horizon = num_time_steps * dt
         self.dt = dt
         self.ts = np.linspace(0, time_horizon, time_horizon / dt + 1)
