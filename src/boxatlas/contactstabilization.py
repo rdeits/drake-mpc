@@ -15,6 +15,9 @@ from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
 SolutionData = namedtuple("SolutionData",
                           ["opt" ,"states", "inputs", "contact_indicator", "ts", "solve_time"])
 
+ContactVariables = namedtuple("ContactVariables", ["contact_lambda", "contact",
+                                                   "contact_sequence_array"])
+
 
 class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
     def add_continuity_constraints(self, piecewise):
@@ -125,6 +128,8 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
     def get_piecewise_solution(self, piecewise):
         def get_solution(x):
+            # this try/except block handles the case when x might be assigned to specific
+            # value rather than being an optimization variable?
             try:
                 return self.GetSolution(x)
             except TypeError:
@@ -132,12 +137,14 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
         return piecewise.map(lambda p: p.map(lambda x: get_solution(x)))
 
-    def extract_solution(self, robot, qcom, qlimb, contact, contact_force):
+    def extract_solution(self, robot, qcom, qlimb, contact, contact_force, contact_lambda,
+                         contact_sequence_array):
         qcom = self.get_piecewise_solution(qcom)
         vcom = qcom.map(Polynomial.derivative)
         qlimb = [self.get_piecewise_solution(q) for q in qlimb]
         flimb = [self.get_piecewise_solution(f) for f in contact_force]
-        contact = [self.get_piecewise_solution(c) for c in contact]
+        contact =self.extract_contact_solution(contact, contact_lambda, contact_sequence_array)
+
         return (Trajectory(
             [qcom, vcom] + qlimb,
             lambda qcom, vcom, *qlimb: BoxAtlasState(robot, qcom=qcom, vcom=vcom, qlimb=qlimb)
@@ -145,6 +152,25 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             flimb,
             lambda *flimb: BoxAtlasInput(robot, flimb=flimb)
         ), contact)
+
+    def extract_contact_solution(self, contact, contact_lambda, contact_sequence_array):
+        contact_val = [None]*len(contact)
+
+        for idx, c in enumerate(contact):
+            if contact_lambda[idx] is None:
+                contact_val[idx] = self.get_piecewise_solution(c)
+            else:
+                # need special logic due to lambda formulation of contact
+                contact_lambda_val = self.GetSolution(contact_lambda[idx])
+                # print("contact_lambda_val", type(contact_lambda_val))
+                # print("contact_lambda_val.dtype, ", contact_lambda_val.dtype)
+                # print("np.shape(contact_lambda_val), ", np.shape(contact_lambda_val))
+                ts = c.breaks
+                contact_val[idx] = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda_val, contact_sequence_array[idx])
+
+
+        return contact_val
+
 
     def add_kinematic_constraints(self, qlimb, qcom, polytope):
         A = polytope.getA()
@@ -166,7 +192,13 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
 
 class BoxAtlasVariables(object):
-    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
+    def __init__(self, prog, ts, num_limbs, dim, initial_state, contact_assignments=None, options=None):
+
+        if options is None:
+            options = dict()
+            options['use_lambda_contact_fomulation'] = False
+
+
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
         prog.add_continuity_constraints(self.qcom)
         self.vcom = self.qcom.derivative()
@@ -178,15 +210,32 @@ class BoxAtlasVariables(object):
             prog.add_continuity_constraints(q)
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
 
+
+
+
+
         if contact_assignments is None:
             contact_assignments = [None for i in range(num_limbs)]
         assert len(contact_assignments) == num_limbs
-        self.contact = []
-        for c in contact_assignments:
+        self.contact = [None]*num_limbs
+        self.contact_lambda = [None]*num_limbs
+        self.contact_sequence_array = [None]*num_limbs
+
+        for idx, c in enumerate(contact_assignments):
             if c is None:
-                self.contact.append(prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary"))
+                if options['use_lambda_contact_formulation']:
+                    # this is lambda formulation where we enumerate potential contact sequences
+                    initial_contact_state = initial_state.contact_indicator[idx]
+                    contact_vars = LambdaContactFormulation.addContactVariables(prog,
+                                                                                ts,
+                                                                                initial_contact_state)
+                    self.contact_lambda[idx] = contact_vars.contact_lambda
+                    self.contact[idx] = contact_vars.contact
+                    self.contact_sequence_array[idx] = contact_vars.contact_sequence_array
+                else: # standard formulation
+                    self.contact[idx] = prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary")
             else:
-                self.contact.append(c)
+                self.contact[idx] = c
 
     def all_state_variables(self):
         x = []
@@ -206,9 +255,38 @@ class BoxAtlasVariables(object):
         return np.vstack(u).T
 
 
-class BoxAtlasContactFormulation(object):
-    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
-        pass
+class LambdaContactFormulation(object):
+    @staticmethod
+    def addContactVariables(prog, ts, initial_contact_state):
+        """
+
+        :param prog: MathematicalProgram inside BoxAtlasContactStabilization
+        :param ts:
+        :param initial_state:
+        :param limb_idx:
+        :param vars: BoxAtlasVarriables
+        :return:
+        """
+        num_time_steps = len(ts) - 1
+        contact_sequence_array = LambdaContactFormulation.enumerateContactSequences(num_time_steps, initial_contact_state)
+
+        # vars will be called contact_lambda
+        # one binary variable for each potential contact sequence
+        num_contact_sequences = np.shape(contact_sequence_array)[0]
+        contact_lambda = prog.NewBinaryVariables(1, num_contact_sequences)
+        contact_lambda = np.reshape(contact_lambda, [np.size(contact_lambda)])
+
+        # add constraint that they sum to one
+        prog.AddLinearConstraint(np.sum(contact_lambda) == 1)
+
+        # now must create contact variables from these binary vars + contact_sequence_array
+
+        contact = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array)
+
+        contact_vars = ContactVariables(contact_lambda=contact_lambda,
+                                        contact=contact,
+                                        contact_sequence_array=contact_sequence_array)
+        return contact_vars
 
     @staticmethod
     def enumerateContactSequences(num_time_steps, initial_contact_state):
@@ -239,12 +317,27 @@ class BoxAtlasContactFormulation(object):
 
         for i in xrange(1,num_time_steps):
             for j in xrange(1, num_time_steps + 1 - i):
-                print("(i,j) = (%s, %s)" % (i,j))
+                # print("(i,j) = (%s, %s)" % (i,j))
                 cs = initial_contact_state*np.ones(num_time_steps, dtype=int)
                 cs[i:i+j] = other_contact_state
                 contact_sequence_list.append(cs)
 
-        return contact_sequence_list
+        contact_sequence_array = np.array(contact_sequence_list)
+
+        return contact_sequence_array
+
+    @staticmethod
+    def constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array):
+        contact_piecewise_functions = []
+        for i in xrange(len(ts) - 1):
+            # value at knot point 'i' is sum of values from different lambas
+            val = np.dot(contact_sequence_array[:, i], contact_lambda)
+            # have to make the value into a polynomial so that it is callable
+            polynomial_val = Polynomial(np.array([[val]]))
+            contact_piecewise_functions.append(polynomial_val)
+
+        contact = Piecewise(ts, contact_piecewise_functions)
+        return contact
 
 
 class BoxAtlasContactStabilization(object):
@@ -252,7 +345,7 @@ class BoxAtlasContactStabilization(object):
                  dt=0.05,
                  num_time_steps=20,
                  params=None,
-                 contact_assignments=None):
+                 contact_assignments=None, options=None):
 
         # load the parameters
         if params is None:
@@ -264,14 +357,14 @@ class BoxAtlasContactStabilization(object):
         self.num_time_steps = num_time_steps
         time_horizon = num_time_steps * dt
         self.dt = dt
-        self.ts = np.linspace(0, time_horizon, time_horizon / dt + 1)
+        self.ts = np.linspace(0, time_horizon, num_time_steps + 1)
         self.dim = self.robot.dim
 
         self.env = env
         self.prog = MixedIntegerTrajectoryOptimization()
         num_limbs = len(self.robot.limb_bounds)
-        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
-                                      contact_assignments)
+        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim, initial_state,
+                                      contact_assignments, options=options)
         self.add_constraints()
         if initial_state is not None:
             self.add_initial_state_constraints(initial_state)
@@ -468,7 +561,8 @@ class BoxAtlasContactStabilization(object):
         assert result == mp.SolutionResult.kSolutionFound
         states, inputs, contact = self.prog.extract_solution(
             self.robot, self.vars.qcom, self.vars.qlimb,
-            self.vars.contact, self.vars.contact_force)
+            self.vars.contact, self.vars.contact_force, self.vars.contact_lambda,
+        self.vars.contact_sequence_array)
         ts = states.components[0].breaks
         return SolutionData(opt=self, states=states, inputs=inputs,
                             contact_indicator=contact, ts=ts, solve_time=solve_time)
