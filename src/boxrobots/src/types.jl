@@ -13,7 +13,7 @@ end
 
 immutable BoxRobot{D}
     mass::Float64
-    dim::Int16
+    dim::Int64
     limbs::Dict{Symbol, LimbConfig{D}}
 end
 
@@ -23,29 +23,29 @@ end
 
 # Now we write down things needed for simulation, namely robot state
 type LimbState{T}
-  pos::Vector{Float64}
-  vel::Vector{Float64}
+  pos::Vector{T}
+  vel::Vector{T}
   in_contact::Bool
 end
 
 type CentroidalDynamicsState{T}
-  pos::Vector{Float64}
-  vel::Vector{Float64}
+  pos::Vector{T}
+  vel::Vector{T}
   # could add angular momentum later if we want
 end
 
 type BoxRobotState{T}
   centroidal_dynamics_state::CentroidalDynamicsState{T}
-  limb_state::Dict{Symbol, LimbState{T}}
+  limb_states::Dict{Symbol, LimbState{T}}
 end
 
 ## INPUTS:
 type LimbInput{T}
-  acceleration::Vector{Float64}
-  force::Vector{Float64}
+  acceleration::Vector{T}
+  force::Vector{T}
   has_force::Bool # should have either acceleration or force, not both
 end
 
 type BoxRobotInput{T}
-  limb_input::Dict{Symbol, LimbInput{T}}
+  limb_inputs::Dict{Symbol, LimbInput{T}}
 end

@@ -16,30 +16,38 @@ function convert_vector_to_3d(v::Vector{Float64})
 end
 
 
+function h_representation_from_bounds(args...)
+  """
+  Computes SimpleHRepresentation form a set of bounds
+  """
+  dim = length(args)
+  A = zeros(Float64, 2*dim, dim)
+  b = zeros(Float64, 2*dim)
+
+  for i=1:dim
+      bounds = args[i]
+      idx_lb = 2*(i-1)+1
+      idx_ub = 2*(i-1)+2
+
+      A[idx_lb, i] = -1
+      b[idx_lb] = -bounds[1]
+
+      A[idx_ub, i] = 1
+      b[idx_ub] = bounds[2]
+  end
+
+  hRep = SimpleHRepresentation(A,b)
+  return hRep
+end
+
 function polyhedron_from_bounds(args...)
   """
   makes polyhedron from bounds.
   Usage: polyehdron_from_bounds([-1,1], [-2,2])
   """
-    dim = length(args)
-    A = zeros(Float64, 2*dim, dim)
-    b = zeros(Float64, 2*dim)
-
-    for i=1:dim
-        bounds = args[i]
-        idx_lb = 2*(i-1)+1
-        idx_ub = 2*(i-1)+2
-
-        A[idx_lb, i] = -1
-        b[idx_lb] = -bounds[1]
-
-        A[idx_ub, i] = 1
-        b[idx_ub] = bounds[2]
-    end
-
-    hRep = SimpleHRepresentation(A,b)
-    poly = polyhedron(hRep, CDDLibrary())
-    return poly
+  hRep = h_representation_from_bounds(args...)
+  poly = polyhedron(hRep, CDDLibrary())
+  return poly
 end
 
 # converts polynomial in H representation to 3d by introducing -1,1 bounds on y vars

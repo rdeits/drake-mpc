@@ -12,9 +12,17 @@ include("visualize.jl")
 export
   Surface,
   Environment,
-  BoxRobot,
   LimbConfig,
+  BoxRobot,
+  CentroidalDynamicsState,
+  LimbState,
+  BoxRobotState,
+  LimbInput,
+  BoxRobotInput,
+  BoxRobotVisualizerOptions,
+  h_representation_from_bounds,
   polyhedron_from_bounds,
   convert_polyhedron_to_3d,
-  draw_environment
+  draw_environment,
+  draw_box_robot_state
 end
