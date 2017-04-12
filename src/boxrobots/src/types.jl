@@ -1,6 +1,6 @@
 immutable Surface{D}
     position::SimpleHRepresentation{D, Float64}
-    force::SimpleHRepresentation{D, Float64}
+    # force::SimpleHRepresentation{D, Float64}
 end
 
 # describes a single limb

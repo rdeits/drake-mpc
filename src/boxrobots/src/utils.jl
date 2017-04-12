@@ -15,6 +15,7 @@ function convert_vector_to_3d(v::Vector{Float64})
   end
 end
 
+
 function polyhedron_from_bounds(args...)
   """
   makes polyhedron from bounds.
@@ -25,7 +26,7 @@ function polyhedron_from_bounds(args...)
     b = zeros(Float64, 2*dim)
 
     for i=1:dim
-        bounds = args[dim]
+        bounds = args[i]
         idx_lb = 2*(i-1)+1
         idx_ub = 2*(i-1)+2
 
@@ -36,7 +37,8 @@ function polyhedron_from_bounds(args...)
         b[idx_ub] = bounds[2]
     end
 
-    poly = polyhedron(SimpleHRepresentation(A,b))
+    hRep = SimpleHRepresentation(A,b)
+    poly = polyhedron(hRep, CDDLibrary())
     return poly
 end
 
@@ -76,6 +78,6 @@ function convert_polyhedron_to_3d(poly::Polyhedron)
     b_3d[end-1] = -ybounds[1]
     b_3d[end] = ybounds[2]
 
-    poly_3d = polyhedron(SimpleHRepresentation(A_3d, b_3d))
+    poly_3d = polyhedron(SimpleHRepresentation(A_3d, b_3d), CDDLibrary())
     return poly_3d
 end
