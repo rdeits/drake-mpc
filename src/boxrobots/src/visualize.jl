@@ -68,13 +68,13 @@ function draw_limb(vis::DrakeVisualizer.Visualizer, limb_sym::Symbol, limb_state
   setgeometry!(vis[:robot][limb_sym][:contact], GeometryData(sphere, grey))
 end
 
-function draw_force(vis::DrakeVisualizer.Visualizer, limb_sym::Symbol, limb_state::LimbState,
+function draw_contact_force(vis::DrakeVisualizer.Visualizer, limb_sym::Symbol, limb_state::LimbState,
   limb_input::LimbInput, options::BoxRobotVisualizerOptions)
   contact_ray_start = convert_vector_to_3d(limb_state.pos)
   contact_ray_end = contact_ray_start +
   convert_vector_to_3d(limb_input.force)/options.force_arrow_normalizer
 
-  force_line = PolyLine([contact_point.location, contact_ray_end], end_head=ArrowHead(0.05, 0.2), radius=0.02)
+  force_line = PolyLine([contact_ray_start, contact_ray_end], end_head=ArrowHead(0.05, 0.2), radius=0.02)
   grey = RGBA(1.,1.,1.)
   geometry_data = GeometryData(force_line, grey)
   setgeometry!(vis[:robot][limb_sym][:contact], geometry_data)

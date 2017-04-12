@@ -31,52 +31,58 @@ left_wall_poly = br.polyhedron_from_bounds([-1.1,-1],[-0.1,1.5])
 left_wall = br.Surface(SimpleHRepresentation(left_wall_poly))
 
 surfaces = [floor, right_wall, left_wall]
-env = Environment(surfaces)
+env = br.Environment(surfaces)
 
 println("drawing environment")
-draw_environment(vis,env)
+br.draw_environment(vis,env)
 
 
 # make a robot
 velocity_limit = 1.0
-limb_bounds = h_representation_from_bounds([-1,1],[-1,1])
-right_foot = LimbConfig("right_foot", velocity_limit, limb_bounds, floor)
-left_foot = LimbConfig("right_foot", velocity_limit, limb_bounds, floor)
+limb_bounds = br.h_representation_from_bounds([-1,1],[-1,1])
+right_foot = br.LimbConfig("right_foot", velocity_limit, limb_bounds, floor)
+left_foot = br.LimbConfig("right_foot", velocity_limit, limb_bounds, floor)
 
 mass = 10.
 dim = 2
 limbs = Dict(:left_foot => left_foot, :right_foot => right_foot)
-robot = BoxRobot(mass, dim, limbs)
+robot = br.BoxRobot(mass, dim, limbs)
 
 
 # make a robot state
 pos = [0.,1.]
 vel = zeros(2)
-centroidal_dynamics_state = CentroidalDynamicsState(pos, vel)
+centroidal_dynamics_state = br.CentroidalDynamicsState(pos, vel)
 
 
 left_foot_pos = [-0.25, 0]
 right_foot_pos = [0.25, 0]
-left_foot_state = LimbState(left_foot_pos, vel, false)
-right_foot_state = LimbState(right_foot_pos, vel, false)
+left_foot_state = br.LimbState(left_foot_pos, vel, false)
+right_foot_state = br.LimbState(right_foot_pos, vel, false)
 
 limb_states = Dict(:left_foot => left_foot_state, :right_foot => right_foot_state)
-robot_state = BoxRobotState(centroidal_dynamics_state, limb_states)
+robot_state = br.BoxRobotState(centroidal_dynamics_state, limb_states)
 
 
 # construct robot input
 acceleration = zeros(Float64, 2)
 force = [0,mass/2.0]
-left_foot_input = LimbInput(acceleration, force, true)
-right_foot_input = LimbInput(acceleration, force, true)
+left_foot_input = br.LimbInput(acceleration, force, true)
+right_foot_input = br.LimbInput(acceleration, force, true)
 
 limb_inputs = Dict(:left_foot => left_foot_input, :right_foot => right_foot_input)
-robot_input = BoxRobotInput(limb_inputs)
+robot_input = br.BoxRobotInput(limb_inputs)
 
-# visualize robot state and input
+# visualize robot state
 println("drawing robot state")
-options = BoxRobotVisualizerOptions()
-draw_box_robot_state(vis, robot_state)
+options = br.BoxRobotVisualizerOptions()
+br.draw_box_robot_state(vis, robot_state)
+
+
+println("drawing robot state and input")
+br.draw_box_robot_state(vis, robot_state; input=robot_input)
+
+
 
 
 println("finished")
