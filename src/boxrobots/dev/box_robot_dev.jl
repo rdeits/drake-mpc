@@ -14,8 +14,8 @@ vis = Visualizer()
 delete!(vis)
 
 # test constructing and drawing a polyhedron
-poly = polyhedron_from_bounds([-1,1], [-1,1])
-poly_3d = convert_polyhedron_to_3d(poly)
+poly = br.polyhedron_from_bounds([-1,1], [-1,1])
+poly_3d = br.convert_polyhedron_to_3d(poly)
 green = RGBA(0.,1.0,0.0)
 # setgeometry!(vis[:poly], GeometryData(poly_3d, green))
 
@@ -32,6 +32,7 @@ left_wall = br.Surface(SimpleHRepresentation(left_wall_poly))
 
 surfaces = [floor, right_wall, left_wall]
 env = br.Environment(surfaces)
+println("typeof(left_wall) = ", typeof(left_wall))
 
 println("drawing environment")
 br.draw_environment(vis,env)
@@ -47,6 +48,7 @@ mass = 10.
 dim = 2
 limbs = Dict(:left_foot => left_foot, :right_foot => right_foot)
 robot = br.BoxRobot(mass, dim, limbs)
+println("robot type = ", typeof(robot))
 
 
 # make a robot state
@@ -66,7 +68,7 @@ robot_state = br.BoxRobotState(centroidal_dynamics_state, limb_states)
 
 # construct robot input
 acceleration = zeros(Float64, 2)
-force = [0,mass/2.0]
+force = [0,mass]
 left_foot_input = br.LimbInput(acceleration, force, true)
 right_foot_input = br.LimbInput(acceleration, force, true)
 
@@ -82,7 +84,17 @@ br.draw_box_robot_state(vis, robot_state)
 println("drawing robot state and input")
 br.draw_box_robot_state(vis, robot_state; input=robot_input)
 
+## Simulate one step
+print("simulating one step")
+println(typeof(robot))
+dt = 0.1
+num_time_steps = 2
+robot_state_final = robot_state
+for i = 1:num_time_steps
+  robot_state_final = br.simulate(robot, robot_state_final, robot_input, dt)
+end
 
-
+pos_next = robot_state_final.centroidal_dynamics_state.pos
+println(pos_next)
 
 println("finished")

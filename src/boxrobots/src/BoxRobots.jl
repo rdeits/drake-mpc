@@ -8,6 +8,7 @@ using CDDLib: CDDLibrary
 include("types.jl")
 include("utils.jl")
 include("visualize.jl")
+include("simulate.jl")
 
 export
   Surface,
@@ -20,6 +21,7 @@ export
   LimbInput,
   BoxRobotInput,
   BoxRobotVisualizerOptions,
+  simulate,
   h_representation_from_bounds,
   polyhedron_from_bounds,
   convert_polyhedron_to_3d,
