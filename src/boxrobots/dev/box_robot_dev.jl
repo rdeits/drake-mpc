@@ -59,8 +59,8 @@ centroidal_dynamics_state = br.CentroidalDynamicsState(pos, vel)
 
 left_foot_pos = [-0.25, 0]
 right_foot_pos = [0.25, 0]
-left_foot_state = br.LimbState(left_foot_pos, vel, false)
-right_foot_state = br.LimbState(right_foot_pos, vel, false)
+left_foot_state = br.LimbState(left_foot_pos, vel, true)
+right_foot_state = br.LimbState(right_foot_pos, vel, true)
 
 limb_states = Dict(:left_foot => left_foot_state, :right_foot => right_foot_state)
 robot_state = br.BoxRobotState(centroidal_dynamics_state, limb_states)
@@ -91,10 +91,14 @@ dt = 0.1
 num_time_steps = 2
 robot_state_final = robot_state
 for i = 1:num_time_steps
+  println("loop iteration = ", i)
   robot_state_final = br.simulate(robot, robot_state_final, robot_input, dt)
 end
 
 pos_next = robot_state_final.centroidal_dynamics_state.pos
-println(pos_next)
-
+println("simulation results \n \n")
+println("pos= ", pos_next)
+println("left_foot.pos ", robot_state_final.limb_states[:left_foot].pos)
+println("left_foot.vel ", robot_state_final.limb_states[:left_foot].vel)
+println("left_foot.in_contact ", robot_state_final.limb_states[:left_foot].in_contact)
 println("finished")

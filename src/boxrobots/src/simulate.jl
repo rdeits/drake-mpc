@@ -8,7 +8,16 @@ function simulate(robot::BoxRobot, state::BoxRobotState, input::BoxRobotInput, d
 
   centroidal_dynamics_state_next = simulate_centroidal_dynamics(robot, state.centroidal_dynamics_state, input, dt)
 
-  state_next = BoxRobotState(centroidal_dynamics_state_next, state.limb_states)
+  limb_states_next = typeof(state.limb_states)() # Dict{Symbol, LimbState{T}}
+  for (limb_sym, limb_state) in state.limb_states
+    limb_config = robot.limbs[limb_sym]
+    limb_input = input.limb_inputs[limb_sym]
+    limb_state_next = simulate_limb_dynamics(limb_config, limb_state, limb_input, dt)
+    limb_states_next[limb_sym] = limb_state_next
+  end
+
+  println("typeof(limb_states_next) = ", typeof(limb_states_next))
+  state_next = BoxRobotState(centroidal_dynamics_state_next, limb_states_next)
 end
 
 function simulate_centroidal_dynamics(robot::BoxRobot, centroidal_dynamics_state::CentroidalDynamicsState, input::BoxRobotInput, dt::Float64)
@@ -43,7 +52,12 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
   """
 
   # if the limb is exerting force then it can't move, by convention
+  # You can only apply force if the limb is currently in contact
   if limb_input.has_force
+    if !limb_state.in_contact
+      error("limb_input.has_force = True but limb_state.in_contact = False")
+    end
+
     vel_next = zeros(limb_state.vel)
     pos_next = copy(limb_state.pos)
     in_contact = true
@@ -52,29 +66,48 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
   end
 
   # if we have gotten here then the limb is not exerting force,
-  # and so it can be moving.
+  # and so it can be moving. There are two cases, depending whether or not we
+  # are currently in contact or not
 
   # extract SimpleHRepresentation of surface corresponding to this limb
   A = limb_config.surface.position.A
   b = limb_config.surface.position.b
 
-  # First check to see if we can move it without penetrating the contact region
-  pos_next = limb_state.pos + limb_state.vel*dt
-  b_next = A*pos_next
-  idx = b_next .< b
+  if !limb_state.in_contact
+    # The limb is currently in free space. First check to see if we can move it
+    # without penetrating the contact region
+    pos_next = limb_state.pos + limb_state.vel*dt
+    b_next = A*pos_next
+    idx = b_next .< b
 
-  # check if penetrates region
-  if any(idx)
-    pos_next = compute_non_penetrating_position(A,b,limb_state.pos,pos_next)
-    vel_next = 0 # set velocity to zero
-    in_contact = true
+    # check if penetrates region
+    if any(idx)
+      pos_next = compute_non_penetrating_position(A,b,limb_state.pos,pos_next)
+      vel_next = 0 # set velocity to zero
+      in_contact = true
+    else
+      vel_next = limb_state.vel + limb_input.acceleration*dt
+      in_contact = false
+    end
+
+    limb_state_next = LimbState(pos_next, vel_next, in_contact)
+    return limb_state_next
   else
-    vel_next = limb_state.vel + limb_input.acceleration*dt
-    in_contact = false
-  end
+    # in this case we are currently in contact, so the acceleration/velocity should
+    # move us out of contact. Note that we always have zero velocity when in contact
+    # so we have to do something a little smarter than Euler integration HyperSphere
 
-  limb_state_next = LimbState(pos_next, vel_next, in_contact)
-  return limb_state_next
+    # we "should" have limb_state.vel == 0 since we are in contact
+    vel_next = limb_state.vel + limb_input.acceleration*dt
+    pos_next = limb_state.pos + limb_state.vel*dt + 1/2.0*dt^2*limb_input.acceleration
+
+    # now we must check that pos_next is actually in the free space
+    b_next = A*pos_next # at least one entry of b_next[i] > b[i]
+    if !any(b_next .> b)
+      name = limb_config.name
+      warning("Limb $name currently in contact, but limb_input.acceleration doesn't move it out of contact")
+    end
+  end
 end
 
 
