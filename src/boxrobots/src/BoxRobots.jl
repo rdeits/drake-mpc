@@ -22,6 +22,9 @@ export
   LimbState,
   BoxRobotState,
   LimbInput,
+  LimbInputType,
+  ConstantVelocityLimbInput,
+  ConstantAccelerationLimbInput,
   BoxRobotInput
 
 # visualization

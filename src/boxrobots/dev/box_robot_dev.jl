@@ -77,15 +77,16 @@ robot_state = br.BoxRobotState(centroidal_dynamics_state, limb_states)
 
 
 # construct robot input
-acceleration = zeros(Float64, 2)
+vel = zeros(Float64, 2)
 force = [0,mass*9.8/2.0]
-left_foot_input = br.LimbInput(acceleration, force, true)
-right_foot_input = br.LimbInput(acceleration, force, true)
+limb_input_type = br.ConstantVelocityLimbInput
+left_foot_input = br.LimbInput(vel, force, true, limb_input_type)
+right_foot_input = br.LimbInput(vel, force, true, limb_input_type)
 
 
-right_hand_acceleration = [1.,0.]
-left_hand_input = br.LimbInput(acceleration, force, false)
-right_hand_input = br.LimbInput(right_hand_acceleration, force, false)
+right_hand_vel = [1.,0.]
+left_hand_input = br.LimbInput(vel, force, false, limb_input_type)
+right_hand_input = br.LimbInput(right_hand_vel, force, false, limb_input_type)
 
 limb_inputs = Dict(:left_foot => left_foot_input, :right_foot => right_foot_input,
 :left_hand => left_hand_input, :right_hand => right_hand_input)
@@ -127,7 +128,7 @@ println("right_hand.in_contact ", robot_state_final.limb_states[:right_hand].in_
 
 
 
-## Simulate one step with controller
+# Simulate one step with controller
 println("simulating robot + controller \n \n ")
 com_pos_desired = [0.,1.5]
 K_p = 10.0
@@ -135,10 +136,10 @@ damping_ratio = 1.0
 controller = br.simple_controller_from_damping_ratio(com_pos_desired, K_p, damping_ratio)
 
 # simulate a timespan
-duration = 1.0
-data_array = br.simulate_tspan(robot, controller, robot_state, dt, duration)
-idx = 10
-br.draw_box_robot_state(vis, data_array.data[idx].state; input=data_array.data[idx].input, options=vis_options)
+duration = 5.0
+dt = 0.05
+@time data_array = br.simulate_tspan(robot, controller, robot_state, dt, duration)
+println("\n\n")
 
 br.playback_trajectory(vis, data_array; options=vis_options)
 

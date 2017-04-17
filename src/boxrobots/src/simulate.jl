@@ -55,11 +55,55 @@ function simulate_centroidal_dynamics(robot::BoxRobot, centroidal_dynamics_state
 
   # Euler integration
   com_acceleration = total_force/robot.mass
-  pos_next = centroidal_dynamics_state.pos + centroidal_dynamics_state.vel*dt
+  pos_next = centroidal_dynamics_state.pos + centroidal_dynamics_state.vel*dt +
+  com_acceleration*dt^2
   vel_next = centroidal_dynamics_state.vel + com_acceleration*dt
+
+  # do Euler step with constant acceleration
+  pos_next, vel_next = euler_step(centroidal_dynamics_state.pos,
+  centroidal_dynamics_state.vel, com_acceleration, dt)
 
   centroidal_dynamics_state_next = CentroidalDynamicsState(pos_next, vel_next)
   return centroidal_dynamics_state_next
+end
+
+function euler_step{T}(pos::AbstractVector{T}, vel::AbstractVector{T}, dt)
+  """
+  Euler step with constant velocity input
+  Returns:
+    - pos_next: position after applying Euler step
+    - vel_next: velocity after applying Euler step
+  """
+  pos_next = pos + vel*dt
+  vel_next = vel
+  return pos_next, vel_next
+end
+
+function euler_step{T}(pos::AbstractVector{T}, vel::AbstractVector{T},
+  acc::AbstractVector{T}, dt)
+  """
+  Euler step with constant acceleration input
+  Returns:
+    - pos_next: position after applying Euler step
+    - vel_next: velocity after applying Euler step
+  """
+  pos_next = pos + vel*dt + acc*dt^2
+  vel_next = vel + acc*dt
+  return pos_next, vel_next
+end
+
+function simulate_limb_dynamics{T}(limb_state::LimbState, limb_input::LimbInput{T,ConstantVelocityLimbInput}, dt::Float64)
+  """
+  Simulate limb dynamics of pos/vel under ConstantVelocityLimbInput
+  """
+  return euler_step(limb_state.pos, limb_input.input, dt)
+end
+
+function simulate_limb_dynamics{T}(limb_state::LimbState, limb_input::LimbInput{T, ConstantAccelerationLimbInput}, dt::Float64)
+  """
+  Simulates euler dynamics for constant acceleration
+  """
+  return euler_step(limb_state.pos, limb_state.vel, limb_input.input, dt)
 end
 
 function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, limb_input::LimbInput, dt::Float64)
@@ -90,12 +134,13 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
   # extract SimpleHRepresentation of surface corresponding to this limb
   A = limb_config.surface.position.A
   b = limb_config.surface.position.b
+  pos_next, vel_next = simulate_limb_dynamics(limb_state, limb_input, dt)
+  b_next = A*pos_next
 
   if !limb_state.in_contact
     # The limb is currently in free space. First check to see if we can move it
     # without penetrating the contact region
-    pos_next = limb_state.pos + limb_state.vel*dt
-    b_next = A*pos_next
+
     idx = b_next .< b
 
     # check if penetrates region
@@ -104,7 +149,8 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
       vel_next = zeros(pos_next) # set velocity to zero
       in_contact = true
     else
-      vel_next = limb_state.vel + limb_input.acceleration*dt
+      # if it doesn't penetrate contact region then just set the flag to
+      # not in contact, leave pos/vel as is
       in_contact = false
     end
 
@@ -116,17 +162,17 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
     # so we have to do something a little smarter than Euler integration HyperSphere
 
     # we "should" have limb_state.vel == 0 since we are in contact
-    vel_next = limb_state.vel + limb_input.acceleration*dt
-    pos_next = limb_state.pos + limb_state.vel*dt + 1/2.0*dt^2*limb_input.acceleration
 
     # now we must check that pos_next is actually in the free space
     b_next = A*pos_next # at least one entry of b_next[i] > b[i]
     if !any(b_next .> b)
       name = limb_config.name
       warn("Limb $name currently in contact, but limb_input.acceleration doesn't move it out of contact, keeping it at it's current position")
+      return Base.deepcopy(limb_state)
     end
 
-    limb_state_next = Base.deepcopy(limb_state)
+    in_contact = false
+    limb_state_next = LimbState(pos_next, vel_next, in_contact)
     return limb_state_next
   end
 end
