@@ -14,6 +14,7 @@ end
 immutable BoxRobot{D}
     mass::Float64
     dim::Int64
+    gravity::Vector{Float64}
     limbs::Dict{Symbol, LimbConfig{D}}
 end
 
@@ -39,13 +40,24 @@ type BoxRobotState{T}
   limb_states::Dict{Symbol, LimbState{T}}
 end
 
+
+abstract LimbInputType
+immutable ConstantVelocityLimbInput <: LimbInputType end
+immutable ConstantAccelerationLimbInput <: LimbInputType end
+
+
 ## INPUTS:
-type LimbInput{T}
-  acceleration::Vector{T}
+type LimbInput{T, InputType <: LimbInputType}
+  input::Vector{T} # limbs are assumed to be constant velocity/acceleration
   force::Vector{T}
-  has_force::Bool # should have either acceleration or force, not both
+  has_force::Bool # should have either input or force, not both
 end
 
-type BoxRobotInput{T}
-  limb_inputs::Dict{Symbol, LimbInput{T}}
+function LimbInput{T, InputType}(input::AbstractVector{T}, force::AbstractVector{T}, has_force::Bool,
+  ::Type{InputType})
+  return LimbInput{T, InputType}(input, force, has_force)
+end
+
+type BoxRobotInput{T, InputType}
+  limb_inputs::Dict{Symbol, LimbInput{T, InputType}}
 end

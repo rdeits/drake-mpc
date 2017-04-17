@@ -1,7 +1,23 @@
+# templated on type of controller
+type BoxRobotSimulationData{T <: BoxRobotController}
+  t::Float64
+  state::BoxRobotState
+  input::BoxRobotInput
+  controller_data::BoxRobotControllerData{T}
+end
+
+type BoxRobotSimulationDataArray
+  tBreaks::Vector{Float64}
+  data::Vector{BoxRobotSimulationData}
+end
 function simulate(robot::BoxRobot, state::BoxRobotState, input::BoxRobotInput, dt::Float64)
   """
   Simulate the system for dt seconds.
   Arguments:
+    - robot: robot object being simulated
+    - state: current state of the robot
+    - input: the control input that will be applied during this simulation step]
+    - dt: timespan (in seconds) to simulate
   Returns:
     next_state
   """
@@ -16,7 +32,6 @@ function simulate(robot::BoxRobot, state::BoxRobotState, input::BoxRobotInput, d
     limb_states_next[limb_sym] = limb_state_next
   end
 
-  println("typeof(limb_states_next) = ", typeof(limb_states_next))
   state_next = BoxRobotState(centroidal_dynamics_state_next, limb_states_next)
 end
 
@@ -35,13 +50,60 @@ function simulate_centroidal_dynamics(robot::BoxRobot, centroidal_dynamics_state
     end
   end
 
+  # add the force from gravity
+  total_force += robot.mass * robot.gravity
+
   # Euler integration
   com_acceleration = total_force/robot.mass
-  pos_next = centroidal_dynamics_state.pos + centroidal_dynamics_state.vel*dt
+  pos_next = centroidal_dynamics_state.pos + centroidal_dynamics_state.vel*dt +
+  com_acceleration*dt^2
   vel_next = centroidal_dynamics_state.vel + com_acceleration*dt
+
+  # do Euler step with constant acceleration
+  pos_next, vel_next = euler_step(centroidal_dynamics_state.pos,
+  centroidal_dynamics_state.vel, com_acceleration, dt)
 
   centroidal_dynamics_state_next = CentroidalDynamicsState(pos_next, vel_next)
   return centroidal_dynamics_state_next
+end
+
+function euler_step{T}(pos::AbstractVector{T}, vel::AbstractVector{T}, dt)
+  """
+  Euler step with constant velocity input
+  Returns:
+    - pos_next: position after applying Euler step
+    - vel_next: velocity after applying Euler step
+  """
+  pos_next = pos + vel*dt
+  vel_next = vel
+  return pos_next, vel_next
+end
+
+function euler_step{T}(pos::AbstractVector{T}, vel::AbstractVector{T},
+  acc::AbstractVector{T}, dt)
+  """
+  Euler step with constant acceleration input
+  Returns:
+    - pos_next: position after applying Euler step
+    - vel_next: velocity after applying Euler step
+  """
+  pos_next = pos + vel*dt + acc*dt^2
+  vel_next = vel + acc*dt
+  return pos_next, vel_next
+end
+
+function simulate_limb_dynamics{T}(limb_state::LimbState, limb_input::LimbInput{T,ConstantVelocityLimbInput}, dt::Float64)
+  """
+  Simulate limb dynamics of pos/vel under ConstantVelocityLimbInput
+  """
+  return euler_step(limb_state.pos, limb_input.input, dt)
+end
+
+function simulate_limb_dynamics{T}(limb_state::LimbState, limb_input::LimbInput{T, ConstantAccelerationLimbInput}, dt::Float64)
+  """
+  Simulates euler dynamics for constant acceleration
+  """
+  return euler_step(limb_state.pos, limb_state.vel, limb_input.input, dt)
 end
 
 function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, limb_input::LimbInput, dt::Float64)
@@ -72,21 +134,23 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
   # extract SimpleHRepresentation of surface corresponding to this limb
   A = limb_config.surface.position.A
   b = limb_config.surface.position.b
+  pos_next, vel_next = simulate_limb_dynamics(limb_state, limb_input, dt)
+  b_next = A*pos_next
 
   if !limb_state.in_contact
     # The limb is currently in free space. First check to see if we can move it
     # without penetrating the contact region
-    pos_next = limb_state.pos + limb_state.vel*dt
-    b_next = A*pos_next
+
     idx = b_next .< b
 
     # check if penetrates region
-    if any(idx)
+    if contained_in_h_representation(limb_config.surface.position, pos_next)
       pos_next = compute_non_penetrating_position(A,b,limb_state.pos,pos_next)
-      vel_next = 0 # set velocity to zero
+      vel_next = zeros(pos_next) # set velocity to zero
       in_contact = true
     else
-      vel_next = limb_state.vel + limb_input.acceleration*dt
+      # if it doesn't penetrate contact region then just set the flag to
+      # not in contact, leave pos/vel as is
       in_contact = false
     end
 
@@ -98,15 +162,18 @@ function simulate_limb_dynamics(limb_config::LimbConfig, limb_state::LimbState, 
     # so we have to do something a little smarter than Euler integration HyperSphere
 
     # we "should" have limb_state.vel == 0 since we are in contact
-    vel_next = limb_state.vel + limb_input.acceleration*dt
-    pos_next = limb_state.pos + limb_state.vel*dt + 1/2.0*dt^2*limb_input.acceleration
 
     # now we must check that pos_next is actually in the free space
     b_next = A*pos_next # at least one entry of b_next[i] > b[i]
     if !any(b_next .> b)
       name = limb_config.name
-      warning("Limb $name currently in contact, but limb_input.acceleration doesn't move it out of contact")
+      warn("Limb $name currently in contact, but limb_input.acceleration doesn't move it out of contact, keeping it at it's current position")
+      return Base.deepcopy(limb_state)
     end
+
+    in_contact = false
+    limb_state_next = LimbState(pos_next, vel_next, in_contact)
+    return limb_state_next
   end
 end
 
@@ -130,7 +197,7 @@ function compute_non_penetrating_position(A,b,x_prev,x_next)
     return x_prev
   end
 
-  eps_array = -ones(idx)
+  eps_array = -ones(b)
   for (i,val) in enumerate(idx)
     # skip if A[i,:] x_prev <= b
     if !val
@@ -141,8 +208,45 @@ function compute_non_penetrating_position(A,b,x_prev,x_next)
   end
 
   # find smallest epsilon satisfying condition
-  eps_min = min(eps_array[eps_array > 0])
+  eps_min = minimum(eps_array[eps_array .> 0])
 
   x = (1-eps_min)*x_prev + eps_min*x_next
   return x
+end
+
+
+function simulate(robot::BoxRobot, controller::BoxRobotController, state::BoxRobotState, t::Float64, dt::Float64)
+  """
+  Simulates robot + controller system for dt seconds
+  Essentially just a convenience method for calling
+  simulate(robot::BoxRobot, state::BoxRobotState, input::BoxRobotInput, dt::Float64)
+
+  Returns:
+    - next_state
+    - BoxRobotSimulationData
+  """
+
+  control_input, controller_data = compute_control_input(robot, controller, state, t, dt)
+  next_state = simulate(robot, state, control_input, dt)
+  simulation_data = BoxRobotSimulationData(t, state, control_input, controller_data)
+  return next_state, simulation_data
+end
+
+function simulate_tspan(robot::BoxRobot, controller::BoxRobotController, initial_state::BoxRobotState, dt::Float64, duration::Float64)
+  """
+  Simulates robot + controller system
+  Returns:
+    - BoxRobotSimulationDataArray: contains all the information about the trajectory
+  """
+  num_time_steps = Int(ceil(duration/dt)) + 1
+  tBreaks = dt*range(0,num_time_steps)
+  data = Vector{BoxRobotSimulationData}(num_time_steps)
+  state = initial_state
+  for i=1:num_time_steps
+    t = tBreaks[i]
+    state, data[i] = simulate(robot, controller, state, t, dt)
+  end
+
+  return BoxRobotSimulationDataArray(tBreaks, data)
+
 end
