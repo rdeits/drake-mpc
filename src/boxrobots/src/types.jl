@@ -14,6 +14,7 @@ end
 immutable BoxRobot{D}
     mass::Float64
     dim::Int64
+    gravity::Vector{Float64}
     limbs::Dict{Symbol, LimbConfig{D}}
 end
 

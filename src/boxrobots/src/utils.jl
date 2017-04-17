@@ -89,3 +89,17 @@ function convert_polyhedron_to_3d(poly::Polyhedron)
     poly_3d = polyhedron(SimpleHRepresentation(A_3d, b_3d), CDDLibrary())
     return poly_3d
 end
+
+
+function contained_in_h_representation(hRep::SimpleHRepresentation,
+  x::Vector)
+  """
+  Checks if A*x <= b
+  """
+  if any(hRep.A*x .> hRep.b)
+    return false
+  else
+    return true
+  end
+
+end
