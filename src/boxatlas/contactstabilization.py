@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 from itertools import islice, chain
 from collections import namedtuple
+import time
 import numpy as np
 import pydrake.solvers.mathematicalprogram as mp
 from pydrake.solvers.gurobi import GurobiSolver
@@ -12,7 +13,10 @@ from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
 
 
 SolutionData = namedtuple("SolutionData",
-                          ["opt" ,"states", "inputs", "contact_indicator", "ts"])
+                          ["opt" ,"states", "inputs", "contact_indicator", "ts", "solve_time"])
+
+ContactVariables = namedtuple("ContactVariables", ["contact_lambda", "contact",
+                                                   "contact_sequence_array"])
 
 
 class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
@@ -93,6 +97,7 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
         for t in ts[:-1]:
             A = surface.force_constraints.getA()
             b = surface.force_constraints.getB()
+
             if contact(t).dtype == np.object:
                 for i in range(A.shape[0]):
                     self.AddLinearConstraint(A[i, :].dot(contact_force(t)) <= b[i] + Mbig * (1 - contact(t)[0]))
@@ -123,6 +128,8 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
     def get_piecewise_solution(self, piecewise):
         def get_solution(x):
+            # this try/except block handles the case when x might be assigned to specific
+            # value rather than being an optimization variable?
             try:
                 return self.GetSolution(x)
             except TypeError:
@@ -130,12 +137,14 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
         return piecewise.map(lambda p: p.map(lambda x: get_solution(x)))
 
-    def extract_solution(self, robot, qcom, qlimb, contact, contact_force):
+    def extract_solution(self, robot, qcom, qlimb, contact, contact_force, contact_lambda,
+                         contact_sequence_array):
         qcom = self.get_piecewise_solution(qcom)
         vcom = qcom.map(Polynomial.derivative)
         qlimb = [self.get_piecewise_solution(q) for q in qlimb]
         flimb = [self.get_piecewise_solution(f) for f in contact_force]
-        contact = [self.get_piecewise_solution(c) for c in contact]
+        contact =self.extract_contact_solution(contact, contact_lambda, contact_sequence_array)
+
         return (Trajectory(
             [qcom, vcom] + qlimb,
             lambda qcom, vcom, *qlimb: BoxAtlasState(robot, qcom=qcom, vcom=vcom, qlimb=qlimb)
@@ -143,6 +152,25 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
             flimb,
             lambda *flimb: BoxAtlasInput(robot, flimb=flimb)
         ), contact)
+
+    def extract_contact_solution(self, contact, contact_lambda, contact_sequence_array):
+        contact_val = [None]*len(contact)
+
+        for idx, c in enumerate(contact):
+            if contact_lambda[idx] is None:
+                contact_val[idx] = self.get_piecewise_solution(c)
+            else:
+                # need special logic due to lambda formulation of contact
+                contact_lambda_val = self.GetSolution(contact_lambda[idx])
+                # print("contact_lambda_val", type(contact_lambda_val))
+                # print("contact_lambda_val.dtype, ", contact_lambda_val.dtype)
+                # print("np.shape(contact_lambda_val), ", np.shape(contact_lambda_val))
+                ts = c.breaks
+                contact_val[idx] = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda_val, contact_sequence_array[idx])
+
+
+        return contact_val
+
 
     def add_kinematic_constraints(self, qlimb, qcom, polytope):
         A = polytope.getA()
@@ -164,7 +192,13 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
 
 class BoxAtlasVariables(object):
-    def __init__(self, prog, ts, num_limbs, dim, contact_assignments=None):
+    def __init__(self, prog, ts, num_limbs, dim, initial_state, contact_assignments=None, options=None):
+
+        if options is None:
+            options = dict()
+            options['use_lambda_contact_fomulation'] = False
+
+
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
         prog.add_continuity_constraints(self.qcom)
         self.vcom = self.qcom.derivative()
@@ -176,15 +210,32 @@ class BoxAtlasVariables(object):
             prog.add_continuity_constraints(q)
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
 
+
+
+
+
         if contact_assignments is None:
             contact_assignments = [None for i in range(num_limbs)]
         assert len(contact_assignments) == num_limbs
-        self.contact = []
-        for c in contact_assignments:
+        self.contact = [None]*num_limbs
+        self.contact_lambda = [None]*num_limbs
+        self.contact_sequence_array = [None]*num_limbs
+
+        for idx, c in enumerate(contact_assignments):
             if c is None:
-                self.contact.append(prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary"))
+                if options['use_lambda_contact_formulation']:
+                    # this is lambda formulation where we enumerate potential contact sequences
+                    initial_contact_state = initial_state.contact_indicator[idx]
+                    contact_vars = LambdaContactFormulation.addContactVariables(prog,
+                                                                                ts,
+                                                                                initial_contact_state)
+                    self.contact_lambda[idx] = contact_vars.contact_lambda
+                    self.contact[idx] = contact_vars.contact
+                    self.contact_sequence_array[idx] = contact_vars.contact_sequence_array
+                else: # standard formulation
+                    self.contact[idx] = prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary")
             else:
-                self.contact.append(c)
+                self.contact[idx] = c
 
     def all_state_variables(self):
         x = []
@@ -204,12 +255,97 @@ class BoxAtlasVariables(object):
         return np.vstack(u).T
 
 
+class LambdaContactFormulation(object):
+    @staticmethod
+    def addContactVariables(prog, ts, initial_contact_state):
+        """
+
+        :param prog: MathematicalProgram inside BoxAtlasContactStabilization
+        :param ts:
+        :param initial_state:
+        :param limb_idx:
+        :param vars: BoxAtlasVarriables
+        :return:
+        """
+        num_time_steps = len(ts) - 1
+        contact_sequence_array = LambdaContactFormulation.enumerateContactSequences(num_time_steps, initial_contact_state)
+
+        # vars will be called contact_lambda
+        # one binary variable for each potential contact sequence
+        num_contact_sequences = np.shape(contact_sequence_array)[0]
+        contact_lambda = prog.NewBinaryVariables(1, num_contact_sequences)
+        contact_lambda = np.reshape(contact_lambda, [np.size(contact_lambda)])
+
+        # add constraint that they sum to one
+        prog.AddLinearConstraint(np.sum(contact_lambda) == 1)
+
+        # now must create contact variables from these binary vars + contact_sequence_array
+
+        contact = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array)
+
+        contact_vars = ContactVariables(contact_lambda=contact_lambda,
+                                        contact=contact,
+                                        contact_sequence_array=contact_sequence_array)
+        return contact_vars
+
+    @staticmethod
+    def enumerateContactSequences(num_time_steps, initial_contact_state):
+        """
+        Enumerates all the potential "good" contact sequences, i.e. at most one
+        contact switch
+        :param num_time_steps:
+        :param initial_contact_state: whether we are in contact or not at first timestep
+        :return: List of np.array, each one is a potential contact sequence
+        """
+
+        def getOtherContactState(x):
+            if x==0:
+                return 1
+            elif x==1:
+                return 0
+            else:
+                raise ValueError("x must be 0 or 1")
+
+        other_contact_state = getOtherContactState(initial_contact_state)
+
+        # initialize contact sequence list
+        contact_sequence_list = []
+
+        # add sequence which just stays the as the initial_contact_state for all time
+        # this one is a corner case
+        contact_sequence_list.append(initial_contact_state* np.ones(num_time_steps, dtype=int))
+
+        for i in xrange(1,num_time_steps):
+            for j in xrange(1, num_time_steps + 1 - i):
+                # print("(i,j) = (%s, %s)" % (i,j))
+                cs = initial_contact_state*np.ones(num_time_steps, dtype=int)
+                cs[i:i+j] = other_contact_state
+                contact_sequence_list.append(cs)
+
+        contact_sequence_array = np.array(contact_sequence_list)
+
+        return contact_sequence_array
+
+    @staticmethod
+    def constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array):
+        contact_piecewise_functions = []
+        for i in xrange(len(ts) - 1):
+            # value at knot point 'i' is sum of values from different lambas
+            val = np.dot(contact_sequence_array[:, i], contact_lambda)
+            # have to make the value into a polynomial so that it is callable
+            polynomial_val = Polynomial(np.array([[val]]))
+            contact_piecewise_functions.append(polynomial_val)
+
+        contact = Piecewise(ts, contact_piecewise_functions)
+        return contact
+
+
 class BoxAtlasContactStabilization(object):
     def __init__(self, initial_state, env, desired_state,
                  dt=0.05,
                  num_time_steps=20,
                  params=None,
-                 contact_assignments=None):
+                 contact_assignments=None, options=None):
 
         # load the parameters
         if params is None:
@@ -218,16 +354,17 @@ class BoxAtlasContactStabilization(object):
             self.params = params
 
         self.robot = desired_state.robot
+        self.num_time_steps = num_time_steps
         time_horizon = num_time_steps * dt
         self.dt = dt
-        self.ts = np.linspace(0, time_horizon, time_horizon / dt + 1)
+        self.ts = np.linspace(0, time_horizon, num_time_steps + 1)
         self.dim = self.robot.dim
 
         self.env = env
         self.prog = MixedIntegerTrajectoryOptimization()
         num_limbs = len(self.robot.limb_bounds)
-        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim,
-                                      contact_assignments)
+        self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim, initial_state,
+                                      contact_assignments, options=options)
         self.add_constraints()
         if initial_state is not None:
             self.add_initial_state_constraints(initial_state)
@@ -239,12 +376,42 @@ class BoxAtlasContactStabilization(object):
             self.prog.AddLinearConstraint(self.vars.qcom(self.ts[0])[i] == initial_state.qcom[i])
             self.prog.AddLinearConstraint(self.vars.vcom(self.ts[0])[i] == initial_state.vcom[i])
             for k in range(num_limbs):
-                self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
+                # don't constrain initial limb velocity to be zero
                 self.prog.AddLinearConstraint(self.vars.qlimb[k](self.ts[0])[i] == initial_state.qlimb[k][i])
+
+                if self.params['options']['zero_initial_limb_velocity']:
+                    self.prog.AddLinearConstraint(self.vars.vlimb[k](self.ts[0])[i] == 0)
+
+    def add_contact_switch_constraints(self, max_num_switches=2):
+        num_limbs = len(self.robot.limb_bounds)
+        switches = [None]*num_limbs
+        for k in xrange(num_limbs):
+            # only add this constraint if those contact variables haven't been assigned
+            if self.vars.contact[k](0).dtype == np.object:
+                switches[k] = self.prog.count_contact_switches(self.vars.contact[k])
+                self.prog.AddLinearConstraint(switches[k] <= max_num_switches)
+
+    def add_one_foot_on_ground_constraint(self):
+        """
+        Enforces that at least one foot be on the ground at all times
+        :return: None
+        """
+        left_leg_idx = self.robot.limb_idx_map["left_leg"]
+        right_leg_idx = self.robot.limb_idx_map["right_leg"]
+
+        for t in self.ts[:-1]:
+            left_leg_contact = self.vars.contact[left_leg_idx](t)
+            right_leg_contact = self.vars.contact[right_leg_idx](t)
+
+            # only add this constraint if at least one of these is an object
+            if (left_leg_contact.dtype == np.object) or (right_leg_contact.dtype == np.object):
+                self.prog.AddLinearConstraint(left_leg_contact[0] + right_leg_contact[0] >= 1)
+
 
     def add_constraints(self, vlimb_max=5, Mq=10, Mv=100, Mf=1000):
         num_limbs = len(self.robot.limb_bounds)
         for k in range(num_limbs):
+
             self.prog.add_no_force_at_distance_constraints(self.vars.contact[k],
                                                            self.vars.contact_force[k], Mf)
             self.prog.add_contact_surface_constraints(self.vars.qlimb[k],
@@ -255,6 +422,8 @@ class BoxAtlasContactStabilization(object):
                                                     self.vars.contact[k], Mf)
             self.prog.add_contact_velocity_constraints(self.vars.qlimb[k],
                                                        self.vars.contact[k], Mv)
+
+            vlimb_max = self.robot.limb_velocity_limits[k]
             self.prog.add_limb_velocity_constraints(self.vars.qcom,
                                                     self.vars.qlimb[k],
                                                     vlimb_max,
@@ -305,16 +474,20 @@ class BoxAtlasContactStabilization(object):
         cost_weights = self.params['costs']
         self.prog.AddQuadraticCost(
             cost_weights['contact_force'] * np.sum(np.sum(np.power(self.vars.contact_force[k](t), 2)) for t in self.ts[:-1] for k in range(num_limbs)))
-        self.prog.AddQuadraticCost(
-            cost_weights['qcom_running'] * np.sum(np.sum(np.power(q - desired_state.qcom, 2)) for q in self.vars.qcom.at_all_breaks()))
 
-        self.prog.AddQuadraticCost(
-            cost_weights['vcom_running'] * np.sum([np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
+        # add the running costs
+        self.add_running_costs(desired_state)
+        self.add_final_costs(desired_state)
+        self.add_contact_velocity_cost(self.params['costs']['limb_velocity'])
 
+    def add_final_costs(self, desired_state):
+        cost_weights = self.params['costs']
+        num_limbs = len(self.robot.limb_bounds)
         qcomf = self.vars.qcom.from_below(self.ts[-1])
         vcomf = self.vars.vcom.from_below(self.ts[-1])
         self.prog.AddQuadraticCost(
-            cost_weights['qcom_final'] * np.sum(np.power(self.vars.qcom.from_below(self.ts[-1]) - desired_state.qcom, 2)))
+            cost_weights['qcom_final'] * np.sum(np.power(qcomf - desired_state.qcom, 2)))
+
         self.prog.AddQuadraticCost(
             cost_weights['vcom_final'] * np.sum(np.power(vcomf - desired_state.vcom, 2)))
 
@@ -326,7 +499,6 @@ class BoxAtlasContactStabilization(object):
         left_arm_idx = self.robot.limb_idx_map["left_arm"]
         left_leg_idx = self.robot.limb_idx_map["left_leg"]
 
-        # final position costs for arms
         self.prog.AddQuadraticCost(
             cost_weights["arm_final_position"] * np.sum(np.power(qlimbf[right_arm_idx] - desired_state.qlimb[right_arm_idx], 2)))
         self.prog.AddQuadraticCost(
@@ -338,19 +510,62 @@ class BoxAtlasContactStabilization(object):
         self.prog.AddQuadraticCost(
             cost_weights['leg_final_position'] * np.sum(np.power(qlimbf[left_leg_idx] - desired_state.qlimb[left_leg_idx], 2)))
 
+
+    def add_running_costs(self, desired_state):
+        cost_weights = self.params['costs']
+        self.prog.AddQuadraticCost(
+            cost_weights['qcom_running'] * np.sum(
+                np.sum(np.power(q - desired_state.qcom, 2)) for q in self.vars.qcom.at_all_breaks()))
+
+        self.prog.AddQuadraticCost(
+            cost_weights['vcom_running'] * np.sum(
+                [np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
+
+    def add_limb_running_costs(self, desired_state):
+        weight = self.params['costs']['limb_running']
+        qcom = self.vars.qcom
+        dt = self.dt
+        ts = qcom.breaks
+
+        num_limbs = len(self.vars.qlimb)
+
+        for limb_idx in xrange(0, num_limbs):
+            limb_com_desired = desired_state.qlimb[limb_idx] - desired_state.qcom
+            qlimb = self.vars.qlimb[limb_idx]
+            for j in range(len(ts) - 1):
+                limb_com = qlimb(ts[j]) - qcom(ts[j])
+
+                self.prog.AddQuadraticCost(weight*np.sum(np.power(limb_com - limb_com_desired, 2)))
+
+
+    def add_contact_velocity_cost(self, weight):
+        qcom = self.vars.qcom
+        dt = self.dt
+
+        for qlimb in self.vars.qlimb:
+            ts = qcom.breaks
+            dim = qcom(ts[0]).size
+            vcom = qcom.derivative()
+            for j in range(len(ts) - 2):
+                relative_velocity = 1.0 / dt * (qlimb(ts[j + 1]) - qlimb(ts[j])) - vcom(ts[j])
+                for i in range(dim):
+                    self.prog.AddQuadraticCost(weight*(relative_velocity[i])**2)
     def solve(self):
         solver = GurobiSolver()
         self.prog.SetSolverOption(mp.SolverType.kGurobi, "LogToConsole", 1)
         self.prog.SetSolverOption(mp.SolverType.kGurobi, "OutputFlag", 1)
+        start_time = time.time()
         result = solver.Solve(self.prog)
+        solve_time = time.time() - start_time
         print(result)
         assert result == mp.SolutionResult.kSolutionFound
         states, inputs, contact = self.prog.extract_solution(
             self.robot, self.vars.qcom, self.vars.qlimb,
-            self.vars.contact, self.vars.contact_force)
+            self.vars.contact, self.vars.contact_force, self.vars.contact_lambda,
+        self.vars.contact_sequence_array)
         ts = states.components[0].breaks
         return SolutionData(opt=self, states=states, inputs=inputs,
-                            contact_indicator=contact, ts=ts)
+                            contact_indicator=contact, ts=ts, solve_time=solve_time)
 
     @staticmethod
     def get_optimization_parameters():
@@ -358,13 +573,17 @@ class BoxAtlasContactStabilization(object):
 
         # weights for all the costs in the optimization
         params['costs'] = dict()
-        params['costs']['contact_force'] = 1e-3
+        params['costs']['contact_force'] = 1e-2
         params['costs']['qcom_running'] = 1e3
-        params['costs']['vcom_running'] = 1e-3
+        params['costs']['vcom_running'] = 1e3
+        params['costs']['limb_running'] = 1
         params['costs']['qcom_final'] = 1e3
         params['costs']['vcom_final'] = 1e4
         params['costs']['arm_final_position'] = 1e4
+        params['costs']['limb_velocity'] = 1e-1
         params['costs']['leg_final_position'] = 1e2
 
+        params['options'] = dict()
+        params['options']['zero_initial_limb_velocity'] = True
         return params
 

@@ -28,8 +28,11 @@ class BoxAtlas(object):
         Polyhedron.fromBounds([-0.75, -0.7], [-0.25, 0.3])  # left arm
     ]
 
+    num_limbs = len(limb_bounds)
+
     limb_idx_map = {"right_arm": 0, "right_leg": 1, "left_leg":2,
                     "left_arm":3}
+
 
     def __init__(self):
         pass
@@ -112,7 +115,7 @@ def planPlayback(vis, solnData, slider=False):
 
 
 class BoxAtlasState(object):
-    def __init__(self, robot, qcom=None, vcom=None, qlimb=None):
+    def __init__(self, robot, qcom=None, vcom=None, qlimb=None, contact_indicator=None):
         self.robot = robot
         if qcom is None:
             qcom = np.zeros(robot.dim)
@@ -124,6 +127,9 @@ class BoxAtlasState(object):
         self.qcom = qcom
         self.vcom = vcom
         self.qlimb = qlimb
+
+        # placeholder for now, stores whether or not a particular limb is in contact
+        self.contact_indicator = contact_indicator
 
     def copy(self):
         return BoxAtlasState(robot=self.robot,
