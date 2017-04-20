@@ -143,6 +143,8 @@ println("\n\n")
 
 br.playback_trajectory(vis, data_array; options=vis_options)
 
+
+idx = 5
 t = data_array.tBreaks[idx]
 data = data_array.data[idx]
 println("t = ", t)
