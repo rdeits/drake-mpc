@@ -341,7 +341,7 @@ class LambdaContactFormulation(object):
 
 
 class BoxAtlasContactStabilization(object):
-    def __init__(self, initial_state, env, desired_state,
+    def __init__(self, robot, initial_state, env, desired_state,
                  dt=0.05,
                  num_time_steps=20,
                  params=None,
@@ -353,7 +353,12 @@ class BoxAtlasContactStabilization(object):
         else:
             self.params = params
 
-        self.robot = desired_state.robot
+        if options is None:
+            self.options = BoxAtlasContactStabilization.make_default_options()
+        else:
+            self.options = options
+
+        self.robot = robot
         self.num_time_steps = num_time_steps
         time_horizon = num_time_steps * dt
         self.dt = dt
@@ -364,7 +369,7 @@ class BoxAtlasContactStabilization(object):
         self.prog = MixedIntegerTrajectoryOptimization()
         num_limbs = len(self.robot.limb_bounds)
         self.vars = BoxAtlasVariables(self.prog, self.ts, num_limbs, self.dim, initial_state,
-                                      contact_assignments, options=options)
+                                      contact_assignments, options=self.options)
         self.add_constraints()
         if initial_state is not None:
             self.add_initial_state_constraints(initial_state)
@@ -478,7 +483,7 @@ class BoxAtlasContactStabilization(object):
         # add the running costs
         self.add_running_costs(desired_state)
         self.add_final_costs(desired_state)
-        self.add_contact_velocity_cost(self.params['costs']['limb_velocity'])
+        self.add_limb_velocity_cost(self.params['costs']['limb_velocity'])
 
     def add_final_costs(self, desired_state):
         cost_weights = self.params['costs']
@@ -521,6 +526,9 @@ class BoxAtlasContactStabilization(object):
             cost_weights['vcom_running'] * np.sum(
                 [np.sum(np.power(q.derivative()(t), 2) for t in self.ts[:-1]) for q in self.vars.qlimb]))
 
+        # add running costs for limb position deviation from nominal
+        self.add_limb_running_costs(desired_state)
+
     def add_limb_running_costs(self, desired_state):
         weight = self.params['costs']['limb_running']
         qcom = self.vars.qcom
@@ -538,7 +546,7 @@ class BoxAtlasContactStabilization(object):
                 self.prog.AddQuadraticCost(weight*np.sum(np.power(limb_com - limb_com_desired, 2)))
 
 
-    def add_contact_velocity_cost(self, weight):
+    def add_limb_velocity_cost(self, weight):
         qcom = self.vars.qcom
         dt = self.dt
 
@@ -586,4 +594,10 @@ class BoxAtlasContactStabilization(object):
         params['options'] = dict()
         params['options']['zero_initial_limb_velocity'] = True
         return params
+
+    @staticmethod
+    def make_default_options():
+        options = dict()
+        options['use_lambda_contact_formulation'] = False
+        return options
 

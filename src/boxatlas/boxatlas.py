@@ -116,7 +116,6 @@ def planPlayback(vis, solnData, slider=False):
 
 class BoxAtlasState(object):
     def __init__(self, robot, qcom=None, vcom=None, qlimb=None, contact_indicator=None):
-        self.robot = robot
         if qcom is None:
             qcom = np.zeros(robot.dim)
         if vcom is None:
