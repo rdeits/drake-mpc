@@ -565,7 +565,6 @@ class BoxAtlasContactStabilization(object):
         start_time = time.time()
         result = solver.Solve(self.prog)
         solve_time = time.time() - start_time
-        print(result)
         assert result == mp.SolutionResult.kSolutionFound
         states, inputs, contact = self.prog.extract_solution(
             self.robot, self.vars.qcom, self.vars.qlimb,

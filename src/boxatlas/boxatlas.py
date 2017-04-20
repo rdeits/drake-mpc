@@ -76,16 +76,16 @@ def drawSinglePlanFrame(vis, solnData, t):
     draw(vis, states(t), inputs(t), env)
 
 
-def planPlayback(vis, solnData):
-    # unpack solution
-    states = solnData.states
-    inputs = solnData.inputs
-    ts = solnData.ts
-
-    # draw solution plan
-    for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
-        drawSinglePlanFrame(vis, solnData, t)
-        time.sleep(0.05)
+# def planPlayback(vis, solnData):
+#     # unpack solution
+#     states = solnData.states
+#     inputs = solnData.inputs
+#     ts = solnData.ts
+#
+#     # draw solution plan
+#     for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
+#         drawSinglePlanFrame(vis, solnData, t)
+#         time.sleep(0.05)
 
 
 def planPlayback(vis, solnData, slider=False):
