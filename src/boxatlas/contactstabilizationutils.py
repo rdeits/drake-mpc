@@ -3,13 +3,134 @@
 # standard lib imports
 import numpy as np
 import matplotlib.pyplot as plt
-
+from collections import namedtuple
 # custom imports
 from irispy import Polyhedron
 from utils.polynomial import Polynomial
 from utils.piecewise import Piecewise
 import boxatlas as box
 from contactstabilization import BoxAtlasContactStabilization
+
+
+# FieldContainer is copied from director.fieldcontainer
+def _repr(self, indent=4):
+    if isinstance(self, FieldContainer):
+        return _fields_repr(self, indent)
+    if isinstance(self, vtk.vtkTransform):
+        return _transform_repr(self, indent)
+    if isinstance(self, dict):
+        return _dict_repr(self, indent)
+    if isinstance(self, list) and len(self) and not isinstance(self[0], (int, float)):
+        return _list_repr(self, indent)
+    else:
+        return repr(self)
+
+class FieldContainer(object):
+
+    __repr__ = _repr
+
+    def __init__(self, **kwargs):
+        self._set_fields(**kwargs)
+
+    def __iter__(self):
+        for name in self._fields:
+            yield name, getattr(self, name)
+
+    def _add_fields(self, **fields):
+        if not hasattr(self, '_fields'):
+            object.__setattr__(self, '_fields', fields.keys())
+        else:
+            object.__setattr__(self, '_fields', list(set(self._fields + fields.keys())))
+        for name, value in fields.iteritems():
+            object.__setattr__(self, name, value)
+
+    def _set_fields(self, **fields):
+        if not hasattr(self, '_fields'):
+            self._add_fields(**fields)
+        else:
+            for name, value in fields.iteritems():
+                self.__setattr__(name, value)
+
+    def __getitem__(self, name):
+        return getattr(self, name)
+
+    def __setitem__(self, name, value):
+        setattr(self, name, value)
+
+    def __len__(self):
+        return len(self._fields)
+
+    def __contains__(self, name):
+        return name in self._fields
+
+    def __setattr__(self, name, value):
+        if hasattr(self, name):
+            object.__setattr__(self, name, value)
+        else:
+            raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
+
+    def __delattr__(self, name):
+        if hasattr(self, name):
+            del self._fields[self._fields.index(name)]
+            object.__delattr__(self, name)
+        else:
+            raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
+
+class BoxAtlasDefaults(FieldContainer):
+    def __init__(self, robot=None, env=None, initial_state=None, desired_state=None, params=None):
+        FieldContainer.__init__(self, robot=robot, env=env, initial_state=initial_state, desired_state=desired_state, params=params, dt=0.05, num_time_steps=20)
+
+    @staticmethod
+    def fill_with_defaults(defaults):
+        """
+        Fills in any None fields of defaults by constructing default values using
+        ContactStabilizationUtils static methods
+        :param defaults:
+        :return:
+        """
+
+        CSU = ContactStabilizationUtils
+        if defaults.robot is None:
+            defaults.robot = CSU.make_box_atlas()
+
+        if defaults.env is None:
+            defaults.env = CSU.make_environment()
+
+        if defaults.initial_state is None:
+            defaults.initial_state = CSU.make_default_initial_state(defaults.robot)
+
+        if defaults.desired_state is None:
+            defaults.desired_state = CSU.make_default_desired_state(defaults.robot)
+
+        if defaults.params is None:
+            defaults.params = CSU.get_default_optimization_parameters()
+
+
+        return defaults
+
+    @staticmethod
+    def copy_with_kwargs(d, **kwargs):
+        """
+        Creates new BoxAtlasDefaults with some fields copied from d, and others
+        filled in with the kwargs
+        :param d: BoxAtlasDefaults with no None fields
+        :param kwargs:
+        :return: BoxAtlasDefaults
+        """
+
+        d_new = BoxAtlasDefaults()
+        for key, _ in d_new:
+            val = None
+            if key in kwargs:
+                val = kwargs[key]
+
+            if val is None:
+                val = getattr(d, key)
+
+            setattr(d_new, key, val)
+
+        return d_new
+
 
 def get_limb_idx_map():
     """
@@ -149,15 +270,23 @@ class ContactStabilizationUtils:
         return desired_state
 
     @staticmethod
-    def make_default_optimization_problem(robot, initial_state=None):
+    def make_default_optimization_problem(robot, env=None, initial_state=None,
+                                          desired_state=None, params=None):
         CSU = ContactStabilizationUtils
+        if env is None:
+            env = CSU.make_environment();
+
         if initial_state is None:
             initial_state = CSU.make_default_initial_state(robot)
 
-        desired_state = CSU.make_default_desired_state(robot)
-        default_env = CSU.make_environment()
-        params = CSU.get_default_optimization_parameters()
-        opt = BoxAtlasContactStabilization(robot, initial_state, default_env, desired_state, params=params)
+        if desired_state is None:
+            desired_state = CSU.make_default_desired_state(robot)
+
+        if params is None:
+            params = CSU.get_default_optimization_parameters()
+
+        opt = BoxAtlasContactStabilization(robot, initial_state, env,
+                                           desired_state, params=params)
         return opt
 
     @staticmethod
@@ -179,3 +308,45 @@ class ContactStabilizationUtils:
         plt.xlabel('time')
         plt.ylabel('contact indicator')
         plt.show()
+
+    @staticmethod
+    def make_box_atlas_defaults():
+        CSU = ContactStabilizationUtils
+        defaults = BoxAtlasDefaults()
+        defaults.robot = CSU.make_box_atlas()
+        defaults.env = CSU.make_environment()
+        defaults.initial_state = CSU.make_default_initial_state(defaults.robot)
+        defaults.desired_state = CSU.make_default_desired_state(defaults.robot)
+        defaults.params = CSU.get_default_optimization_parameters()
+        return defaults
+
+    @staticmethod
+    def populate_box_atlas_defaults(defaults, robot=None, env=None, initial_state=None,
+                                    desired_state=None, params=None):
+
+        new_defaults = BoxAtlasDefaults()
+        # initialize defaults
+        if robot is None:
+            new_defaults.robot = defaults.robot
+        else:
+            new_defaults.robot = robot
+
+        if env is None:
+            new_defaults.env = defaults.env
+        else:
+            new_defaults.env = env
+
+        if initial_state is None:
+            new_defaults.initial_state = defaults.initial_state
+        else:
+            new_defaults.initial_state = initial_state
+
+        if desired_state is None:
+            new_defaults.desired_state = defaults.desired_state
+        else:
+            new_defaults.desired_state = desired_state
+
+        if params is None:
+            new_defaults.params = defaults.params
+        else:
+            new_defaults.params = params
