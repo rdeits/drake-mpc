@@ -129,28 +129,37 @@ println("right_hand.in_contact ", robot_state_final.limb_states[:right_hand].in_
 
 
 # Simulate one step with controller
-println("simulating robot + controller \n \n ")
-com_pos_desired = [0.,1.5]
-K_p = 10.0
-damping_ratio = 1.0
-controller = br.simple_controller_from_damping_ratio(com_pos_desired, K_p, damping_ratio)
+# println("simulating robot + controller \n \n ")
+# com_pos_desired = [0.,1.5]
+# K_p = 10.0
+# damping_ratio = 1.0
+# controller = br.simple_controller_from_damping_ratio(com_pos_desired, K_p, damping_ratio)
+#
+# # simulate a timespan
+# duration = 5.0
+# dt = 0.05
+# @time data_array = br.simulate_tspan(robot, controller, robot_state, dt, duration)
+# println("\n\n")
+#
+# br.playback_trajectory(vis, data_array; options=vis_options)
+#
+#
+# idx = 5
+# t = data_array.tBreaks[idx]
+# data = data_array.data[idx]
+# println("t = ", t)
+# println("com_pos ", data.state.centroidal_dynamics_state.pos)
+# println("com_vel ", data.state.centroidal_dynamics_state.vel)
+#
+# println("com_acc ", data.controller_data.com_acc)
 
-# simulate a timespan
-duration = 5.0
-dt = 0.05
-@time data_array = br.simulate_tspan(robot, controller, robot_state, dt, duration)
-println("\n\n")
-
-br.playback_trajectory(vis, data_array; options=vis_options)
-
-
-idx = 5
-t = data_array.tBreaks[idx]
-data = data_array.data[idx]
-println("t = ", t)
-println("com_pos ", data.state.centroidal_dynamics_state.pos)
-println("com_vel ", data.state.centroidal_dynamics_state.vel)
-
-println("com_acc ", data.controller_data.com_acc)
+# Test interface to Python controller
+println("\n\n ----------- \n \n ")
+println("Testing out python controller")
+miqp_controller = br.MIQPController()
+t = 0.
+robot_input = br.compute_control_input(robot, miqp_controller, robot_state, t, dt)
+println("drawing robot state and input")
+br.draw_box_robot_state(vis, robot_state; input=robot_input, options=vis_options)
 
 println("finished")
