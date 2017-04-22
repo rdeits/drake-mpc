@@ -10,3 +10,4 @@ using DrakeVisualizer
 include("types.jl")
 include("visualize.jl")
 include("simulate.jl")
+include("control.jl")
