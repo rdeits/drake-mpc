@@ -101,5 +101,4 @@ function contained_in_h_representation(hRep::SimpleHRepresentation,
   else
     return true
   end
-
 end
