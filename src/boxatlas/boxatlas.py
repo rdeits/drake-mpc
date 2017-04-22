@@ -139,7 +139,7 @@ class BoxAtlasState(object):
 
 
 class BoxAtlasInput(object):
-    def __init__(self, robot, flimb=None, vlimb=None):
+    def __init__(self, robot, flimb=None, vlimb=None, force_indicator=None):
         self.robot = robot
         if flimb is None:
             flimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
@@ -147,8 +147,12 @@ class BoxAtlasInput(object):
         if vlimb is None:
             vlimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
 
+        if force_indicator is None:
+            force_indicator = [False for _ in robot.limb_bounds]
+
         self.flimb = flimb
         self.vlimb = vlimb
+        self.force_indicator = force_indicator
 
 
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])
