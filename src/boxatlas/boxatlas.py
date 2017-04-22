@@ -128,6 +128,7 @@ class BoxAtlasState(object):
         self.qlimb = qlimb
 
         # placeholder for now, stores whether or not a particular limb is in contact
+        # currently only used in lambda formulation
         self.contact_indicator = contact_indicator
 
     def copy(self):
@@ -138,11 +139,16 @@ class BoxAtlasState(object):
 
 
 class BoxAtlasInput(object):
-    def __init__(self, robot, flimb=None):
+    def __init__(self, robot, flimb=None, vlimb=None):
         self.robot = robot
         if flimb is None:
             flimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
+
+        if vlimb is None:
+            vlimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
+
         self.flimb = flimb
+        self.vlimb = vlimb
 
 
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])

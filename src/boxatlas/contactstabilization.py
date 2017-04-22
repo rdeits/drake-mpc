@@ -139,18 +139,23 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
     def extract_solution(self, robot, qcom, qlimb, contact, contact_force, contact_lambda,
                          contact_sequence_array):
+
         qcom = self.get_piecewise_solution(qcom)
         vcom = qcom.map(Polynomial.derivative)
         qlimb = [self.get_piecewise_solution(q) for q in qlimb]
+        vlimb = [q.map(Polynomial.derivative) for q in qlimb]
         flimb = [self.get_piecewise_solution(f) for f in contact_force]
         contact =self.extract_contact_solution(contact, contact_lambda, contact_sequence_array)
 
+
+        # note that flimb, vlimb are lists so we have to be extra careful when constructing
+        # the Trajectory object for BoxAtlasInput
         return (Trajectory(
             [qcom, vcom] + qlimb,
             lambda qcom, vcom, *qlimb: BoxAtlasState(robot, qcom=qcom, vcom=vcom, qlimb=qlimb)
         ), Trajectory(
-            flimb,
-            lambda *flimb: BoxAtlasInput(robot, flimb=flimb)
+            [flimb, vlimb],
+            lambda flimb, vlimb: BoxAtlasInput(robot, flimb=flimb, vlimb=vlimb)
         ), contact)
 
     def extract_contact_solution(self, contact, contact_lambda, contact_sequence_array):
