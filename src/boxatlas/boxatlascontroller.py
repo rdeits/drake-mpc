@@ -1,7 +1,7 @@
 # Wrapper for BoxAtlasContactStabilization to facilitate feedback control
 import numpy as np
 import matplotlib.pyplot as plt
-
+from collections import namedtuple
 # custom imports
 from irispy import Polyhedron
 from utils.polynomial import Polynomial
@@ -10,6 +10,7 @@ import boxatlas as box
 from contactstabilization import BoxAtlasContactStabilization
 from contactstabilizationutils import ContactStabilizationUtils as CSU
 from contactstabilizationutils import BoxAtlasDefaults
+
 
 class BoxAtlasController:
 
@@ -38,3 +39,22 @@ class BoxAtlasController:
                                            options=options)
 
         return opt
+
+    def extract_control_input_from_soln(self, solnData):
+        # extract contact indicator and add it to
+        t = 0
+        box_atlas_input = solnData.inputs(t)
+        for limb_name, limb_idx in self.defaults.robot.limb_idx_map.iteritems():
+            contact_indicator = solnData.contact_indicator[limb_idx](t)[0]
+            # contact_indicator should always be zero or 1, but we want to convert it into
+            # a boolean for passing to Julia
+            box_atlas_input.force_indicator[limb_idx] = contact_indicator > 0.5
+
+        return box_atlas_input
+
+    def compute_control_input(self, initial_state, **kwargs):
+        opt = self.construct_contact_stabilization_optimization(initial_state, **kwargs)
+        solnData = opt.solve()
+        return self.extract_control_input_from_soln(solnData)
+
+
