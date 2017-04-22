@@ -90,3 +90,20 @@ function compute_control_input(robot::BoxRobot, controller::SimpleBoxAtlasContro
   controller_data = SimpleBoxAtlasControllerData(t, com_acc_des)
   return control_input, controller_data
 end
+
+
+function input_with_no_force_at_distance!(state::BoxRobotState, input::BoxRobotInput)
+  """
+  Set has_force = false for limbs that aren't in contact yet
+  This is a safety method, otherwise simulator will throw errors
+  Returns:
+    - modifies input inplace
+  """
+
+  for (limb_sym, limb_input) in input.limb_inputs
+    if !state.limb_states[limb_sym].in_contact
+      limb_input.has_force = false
+    end
+  end
+
+end

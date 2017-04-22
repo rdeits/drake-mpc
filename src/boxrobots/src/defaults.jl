@@ -40,8 +40,8 @@ function make_robot_state()
   left_foot_state = LimbState(left_foot_pos, vel, true)
   right_foot_state = LimbState(right_foot_pos, vel, true)
 
-  left_hand_pos = [-0.35, 1.25]
-  right_hand_pos = [0.35, 1.25]
+  left_hand_pos = [-0.35, 1.0]
+  right_hand_pos = [0.35, 1.0]
   left_hand_state = LimbState(left_hand_pos, vel, false)
   right_hand_state = LimbState(right_hand_pos, vel, false)
 

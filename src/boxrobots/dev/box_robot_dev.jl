@@ -10,25 +10,30 @@ using Polyhedra: SimpleHRepresentation
 br = BoxRobots
 # attempt to visualize a state
 DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window();
+vis = Visualizer()
+delete!(vis)
+env, robot = br.make_robot_and_environment()
+robot_state = br.make_robot_state()
+robot_state.limb_states[:left_hand].pos[2] = 1.25
+
+br.draw_environment(vis, env)
 mass = robot.mass
 gravity = robot.gravity
 vis_options = br.BoxRobotVisualizerOptions(force_arrow_normalizer=mass*abs(gravity[end]))
-vis = Visualizer()
-delete!(vis)
 
-
-env, robot = br.make_robot_and_environment()
-robot_state = br.make_robot_state()
-
-br.draw_environment(vis, env)
 
 println("\n\n ----------- \n \n ")
 println("Testing out python controller")
 miqp_controller = br.MIQPController()
 t = 0.0
 dt = 0.05
-robot_input = br.compute_control_input(robot, miqp_controller, robot_state, t, dt)
+duration = 1.00
+robot_input, data = br.compute_control_input(robot, miqp_controller, robot_state, t, dt)
 println("drawing robot state and input")
 br.draw_box_robot_state(vis, robot_state; input=robot_input, options=vis_options)
+
+@time traj = br.simulate_tspan(robot, miqp_controller, robot_state, dt, duration)
+br.playback_trajectory(vis, traj; options=vis_options)
+
 
 println("finished")

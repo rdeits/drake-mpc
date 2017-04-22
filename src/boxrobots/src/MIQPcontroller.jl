@@ -9,6 +9,10 @@ type MIQPController <: BoxRobotController
   python_controller::PyObject
 end
 
+type MIQPControllerData <: BoxRobotControllerData{MIQPController}
+  solve_time::Float64
+end
+
 # outer constructor for MIQPController
 function MIQPController()
   python_controller = boxatlascontroller.BoxAtlasController()
@@ -47,9 +51,17 @@ function compute_control_input(robot::BoxRobot, controller::MIQPController, stat
   Returns:
     - (BoxRobotInput, BoxRobotControllerData)
   """
-  robot_python = controller.python_controller[:defaults][:robot]
+  # call into python to do the MIQP solve
+  python_controller = controller.python_controller
+  robot_python = python_controller[:defaults][:robot]
   state_python = convert_box_robot_state_to_python(robot_python, state)
-  control_input_python = controller.python_controller[:compute_control_input](state_python)
+  opt = python_controller[:construct_contact_stabilization_optimization](state_python)
+  soln_data = pycall(opt[:solve], PyObject)
+  control_input_python = python_controller[:extract_control_input_from_soln](soln_data)
+
+  # convert python results to correct julia types
   box_robot_input = convert_box_atlas_input_from_python(control_input_python)
-  return box_robot_input
+  input_with_no_force_at_distance!(state, box_robot_input)
+  data = MIQPControllerData(soln_data[:solve_time])
+  return box_robot_input, data
 end

@@ -89,7 +89,7 @@ function draw_environment(vis::DrakeVisualizer.Visualizer, env::Environment)
   end
 end
 
-function playback_trajectory(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSimulationDataArray; options=nothing)
+function playback_trajectory(vis::DrakeVisualizer.Visualizer, traj::Trajectory{BoxRobotSimulationData}; options=nothing)
   """
   Draws each frame of the trajectory, sleeps for dt seconds in between draws
   """
@@ -99,9 +99,9 @@ function playback_trajectory(vis::DrakeVisualizer.Visualizer, data_array::BoxRob
     options = BoxRobotVisualizerOptions()
   end
 
-  dt = data_array.tBreaks[2] - data_array.tBreaks[1]
-  data = data_array.data
-  num_time_steps = length(data_array.tBreaks)
+  dt = traj.time[2] - traj.time[1]
+  data = traj.data
+  num_time_steps = length(data)
 
   for idx=1:num_time_steps
     state = data[idx].state
@@ -112,7 +112,7 @@ function playback_trajectory(vis::DrakeVisualizer.Visualizer, data_array::BoxRob
 
 end
 
-function slider_playback(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSimulationDataArray; options=nothing)
+function slider_playback(vis::DrakeVisualizer.Visualizer, traj::Trajectory{BoxRobotSimulationData}; options=nothing)
   """
   Constructs slider that can draw the trajectory
   """
@@ -122,14 +122,13 @@ function slider_playback(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSi
     options = BoxRobotVisualizerOptions()
   end
 
-  dt = data_array.tBreaks[2] - data_array.tBreaks[1]
-  data = data_array.data
-  num_time_steps = length(data_array.tBreaks)
+  dt = traj.time[2] - traj.time[1]
+  data = traj.data
+  num_time_steps = length(data)
 
   @manipulate for idx=1:num_time_steps
     state = data[idx].state
     input = data[idx].input
     draw_box_robot_state(vis::DrakeVisualizer.Visualizer, state::BoxRobotState;  options=options, input=input)
-    sleep(dt)
   end
 end
