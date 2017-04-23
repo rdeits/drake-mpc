@@ -1,11 +1,15 @@
-function make_robot_and_environment()
-  floor_poly = polyhedron_from_bounds([-1,1],[-0.1,0])
+function make_robot_and_environment(;dist_to_left_wall=0.5, dist_to_right_wall=0.5)
+  thickness = 0.1
+  floor_poly = polyhedron_from_bounds([-1,1],[-thickness,0])
   floor = Surface(SimpleHRepresentation(floor_poly))
 
-  right_wall_poly = polyhedron_from_bounds([1,1.1],[-0.1,1.5])
+
+  right_wall_poly = polyhedron_from_bounds([dist_to_right_wall,
+  dist_to_right_wall + thickness],[-0.1,1.5])
   right_wall = Surface(SimpleHRepresentation(right_wall_poly))
 
-  left_wall_poly = polyhedron_from_bounds([-1.1,-1],[-0.1,1.5])
+  left_wall_poly = polyhedron_from_bounds([-(dist_to_left_wall + thickness),
+  -dist_to_left_wall],[-0.1,1.5])
   left_wall = Surface(SimpleHRepresentation(left_wall_poly))
 
   surfaces = [floor, right_wall, left_wall]
