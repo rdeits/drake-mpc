@@ -16,10 +16,10 @@ class BoxAtlasController:
 
     def __init__(self, **kwargs):
         # initialize defaults
-        self.defaults = BoxAtlasDefaults(**kwargs)
-        BoxAtlasDefaults.fill_with_defaults(self.defaults)
+        self.defaults = BoxAtlasDefaults.make_defaults(**kwargs)
+        self.robot = self.defaults["robot"]
 
-    def construct_contact_stabilization_optimization(self, initial_state, options=None, contact_assignments=None, **kwargs):
+    def construct_contact_stabilization_optimization(self, initial_state, **kwargs):
         """
         Constructs a contact stabilization problem starting from the given initial state
         Can specify any additional information you want using kwargs which can be any
@@ -28,15 +28,16 @@ class BoxAtlasController:
         :param kwargs:
         :return:
         """
-        d = BoxAtlasDefaults.copy_with_kwargs(self.defaults, initial_state=initial_state,
+        d = BoxAtlasDefaults.copy_with_kwargs(self.defaults,
+                                              initial_state=initial_state,
                                               **kwargs)
 
-        opt = BoxAtlasContactStabilization(d.robot, d.initial_state, d.env,
-                                           d.desired_state, dt=d.dt,
-                                           num_time_steps=d.num_time_steps,
-                                           params=d.params,
-                                           contact_assignments=contact_assignments,
-                                           options=options)
+        opt = BoxAtlasContactStabilization(d["robot"], d["initial_state"], d["env"],
+                                           d["desired_state"], dt=d["dt"],
+                                           num_time_steps=d["num_time_steps"],
+                                           params=d["params"],
+                                           contact_assignments=d["contact_assignments"],
+                                           options=d["options"])
 
         return opt
 
@@ -44,7 +45,7 @@ class BoxAtlasController:
         # extract contact indicator and add it to
         t = 0
         box_atlas_input = solnData.inputs(t)
-        for limb_name, limb_idx in self.defaults.robot.limb_idx_map.iteritems():
+        for limb_name, limb_idx in self.robot.limb_idx_map.iteritems():
             contact_indicator = solnData.contact_indicator[limb_idx](t)[0]
             # contact_indicator should always be zero or 1, but we want to convert it into
             # a boolean for passing to Julia
