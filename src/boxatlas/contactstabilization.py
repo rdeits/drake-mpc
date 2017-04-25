@@ -252,7 +252,6 @@ class BoxAtlasVariables(object):
                     val = contact_sequence[idx]
                     if val is not None:
                         assert(val in [0,1])
-                        print("typeof(c) = ", type(c))
                         prog.AddLinearConstraint(c == val)
 
 
