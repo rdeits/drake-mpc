@@ -55,6 +55,7 @@ class BoxAtlasController:
     def compute_control_input(self, initial_state, **kwargs):
         opt = self.construct_contact_stabilization_optimization(initial_state, **kwargs)
         solnData = opt.solve()
-        return self.extract_control_input_from_soln(solnData)
+        box_atlas_input = self.extract_control_input_from_soln(solnData)
+        return box_atlas_input, solnData
 
 

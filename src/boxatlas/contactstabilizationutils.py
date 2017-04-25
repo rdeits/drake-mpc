@@ -213,6 +213,9 @@ class ContactStabilizationUtils:
         params['costs']['arm_final_position'] = 0
         params['costs']['limb_velocity'] = 1e-1
         params['costs']['leg_final_position'] = 1e2
+
+        params['options'] = dict()
+        params['options']['zero_initial_limb_velocity'] = False
         return params
 
 

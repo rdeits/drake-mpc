@@ -57,8 +57,7 @@ export
 export
   h_representation_from_bounds,
   polyhedron_from_bounds,
-  convert_polyhedron_to_3d,
-  eval
+  convert_polyhedron_to_3d
 
 # defaults
 export

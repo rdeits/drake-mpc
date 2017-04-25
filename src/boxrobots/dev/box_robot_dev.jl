@@ -12,9 +12,10 @@ br = BoxRobots
 DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window();
 vis = Visualizer()
 delete!(vis)
-env, robot = br.make_robot_and_environment()
+env, robot = br.make_robot_and_environment(dist_to_left_wall=0.5)
 robot_state = br.make_robot_state()
-robot_state.limb_states[:left_hand].pos[2] = 1.25
+# robot_state.limb_states[:left_hand].pos[2] = 1.25
+robot_state.centroidal_dynamics_state.vel[1] = -0.5
 
 br.draw_environment(vis, env)
 mass = robot.mass
@@ -27,7 +28,7 @@ println("Testing out python controller")
 miqp_controller = br.MIQPController()
 t = 0.0
 dt = 0.05
-duration = 1.00
+duration = 1.0
 robot_input, data = br.compute_control_input(robot, miqp_controller, robot_state, t, dt)
 println("drawing robot state and input")
 br.draw_box_robot_state(vis, robot_state; input=robot_input, options=vis_options)

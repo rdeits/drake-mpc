@@ -111,7 +111,7 @@ function playback_trajectory(vis::DrakeVisualizer.Visualizer, traj::Trajectory{B
   data = traj.data
 
   while (t <= t_end)
-    d = eval(traj, t)
+    d = traj(t)
     state = d.state
     input = d.input
     draw_box_robot_state(vis::DrakeVisualizer.Visualizer, state::BoxRobotState;  options=options, input=input)

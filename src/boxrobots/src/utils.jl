@@ -103,7 +103,7 @@ function contained_in_h_representation(hRep::SimpleHRepresentation,
   end
 end
 
-function eval(traj::Trajectory, t)
+function (traj::Trajectory)(t)
   """
   Index into the trajectory and return the data
   Find largest idx such that traj.time[idx] <= t.
