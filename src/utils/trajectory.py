@@ -6,4 +6,12 @@ class Trajectory(object):
         self.constructor = constructor
 
     def __call__(self, t):
-        return self.constructor(*[c(t) for c in self.components])
+        args = []
+        for c in self.components:
+            if callable(c):
+                args.append(c(t))
+            else:
+                # assume c is a list of callable things
+                args.append([c_i(t) for c_i in c])
+
+        return self.constructor(*args)

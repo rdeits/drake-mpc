@@ -61,3 +61,10 @@ end
 type BoxRobotInput{T, InputType}
   limb_inputs::Dict{Symbol, LimbInput{T, InputType}}
 end
+
+
+# Trajectory: Just a container for data
+type Trajectory{T}
+  time::AbstractVector # sorted vector of time
+  data::AbstractVector{T}
+end

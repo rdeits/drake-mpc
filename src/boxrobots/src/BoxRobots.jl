@@ -8,8 +8,10 @@ using CDDLib: CDDLibrary
 include("types.jl")
 include("utils.jl")
 include("control.jl")
+include("MIQPcontroller.jl")
 include("simulate.jl")
 include("visualize.jl")
+include("defaults.jl")
 
 
 # core
@@ -45,8 +47,11 @@ export
   BoxRobotController,
   BoxRobotControllerData,
   SimpleBoxAtlasController,
+  MIQPController,
   SimpleBoxAtlasControllerData,
   simple_controller_from_damping_ratio
+  convert_box_atlas_input_from_python,
+  compute_control_input
 
 # utils
 export
@@ -54,5 +59,10 @@ export
   polyhedron_from_bounds,
   convert_polyhedron_to_3d
 
+# defaults
+export
+  make_robot_and_environment,
+  make_robot_state,
+  make_robot_input
 
 end

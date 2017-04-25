@@ -76,16 +76,16 @@ def drawSinglePlanFrame(vis, solnData, t):
     draw(vis, states(t), inputs(t), env)
 
 
-def planPlayback(vis, solnData):
-    # unpack solution
-    states = solnData.states
-    inputs = solnData.inputs
-    ts = solnData.ts
-
-    # draw solution plan
-    for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
-        drawSinglePlanFrame(vis, solnData, t)
-        time.sleep(0.05)
+# def planPlayback(vis, solnData):
+#     # unpack solution
+#     states = solnData.states
+#     inputs = solnData.inputs
+#     ts = solnData.ts
+#
+#     # draw solution plan
+#     for t in np.linspace(0, ts[-1] - 0.001, ts[-1] / 0.01):
+#         drawSinglePlanFrame(vis, solnData, t)
+#         time.sleep(0.05)
 
 
 def planPlayback(vis, solnData, slider=False):
@@ -116,7 +116,6 @@ def planPlayback(vis, solnData, slider=False):
 
 class BoxAtlasState(object):
     def __init__(self, robot, qcom=None, vcom=None, qlimb=None, contact_indicator=None):
-        self.robot = robot
         if qcom is None:
             qcom = np.zeros(robot.dim)
         if vcom is None:
@@ -129,6 +128,7 @@ class BoxAtlasState(object):
         self.qlimb = qlimb
 
         # placeholder for now, stores whether or not a particular limb is in contact
+        # currently only used in lambda formulation
         self.contact_indicator = contact_indicator
 
     def copy(self):
@@ -139,11 +139,20 @@ class BoxAtlasState(object):
 
 
 class BoxAtlasInput(object):
-    def __init__(self, robot, flimb=None):
+    def __init__(self, robot, flimb=None, vlimb=None, force_indicator=None):
         self.robot = robot
         if flimb is None:
             flimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
+
+        if vlimb is None:
+            vlimb = [np.zeros(robot.dim) for _ in robot.limb_bounds]
+
+        if force_indicator is None:
+            force_indicator = [False for _ in robot.limb_bounds]
+
         self.flimb = flimb
+        self.vlimb = vlimb
+        self.force_indicator = force_indicator
 
 
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])

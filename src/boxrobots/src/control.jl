@@ -1,6 +1,33 @@
 abstract BoxRobotController
 abstract BoxRobotControllerData{T<:BoxRobotController}
 
+# maps julia limb symbols to python indices, note that the indices are
+# really the python indices + 1, since julia is 1-indexed and python is
+# 0-indexed
+global julia_to_python_limb_map = Dict(:right_hand =>1, :right_foot => 2,
+:left_foot => 3, :left_hand => 4)
+
+function convert_box_atlas_input_from_python(box_atlas_input_python)
+  """
+  Converts BoxAtlasInput from boxatlas.py to Julia type
+  BoxRobotInput{Float64, ConstantVelocityLimbInput}
+  """
+  limb_inputs = Dict{Symbol, LimbInput{Float64, ConstantVelocityLimbInput}}()
+  for (limb_sym, limb_python_idx) in julia_to_python_limb_map
+    vel = box_atlas_input_python[:vlimb][limb_python_idx]
+    force = box_atlas_input_python[:flimb][limb_python_idx]
+    # need to be careful here, seems that
+    # typeof(box_atlas_input_python[:force_indicator][limb_python_idx]) = Array{Bool, 0}
+    # we need it to be a Bool
+    has_force = any(box_atlas_input_python[:force_indicator][limb_python_idx])
+    limb_inputs[limb_sym] = LimbInput(vel, force, has_force, ConstantVelocityLimbInput)
+  end
+
+  box_robot_input = BoxRobotInput(limb_inputs)
+  return box_robot_input
+end
+
+
 type SimpleBoxAtlasController <: BoxRobotController
   com_pos_desired::Vector{Float64}
   K_p::Float64
@@ -62,4 +89,21 @@ function compute_control_input(robot::BoxRobot, controller::SimpleBoxAtlasContro
 
   controller_data = SimpleBoxAtlasControllerData(t, com_acc_des)
   return control_input, controller_data
+end
+
+
+function input_with_no_force_at_distance!(state::BoxRobotState, input::BoxRobotInput)
+  """
+  Set has_force = false for limbs that aren't in contact yet
+  This is a safety method, otherwise simulator will throw errors
+  Returns:
+    - modifies input inplace
+  """
+
+  for (limb_sym, limb_input) in input.limb_inputs
+    if !state.limb_states[limb_sym].in_contact
+      limb_input.has_force = false
+    end
+  end
+
 end

@@ -7,6 +7,7 @@ using Interact, Reactive
   force_arrow_normalizer::Float64 = 10.0
   com_radius::Float64 = 0.1
   contact_point_radius::Float64 = 0.05
+  playback_dt::Float64 = 0.05
 end
 
 
@@ -89,9 +90,11 @@ function draw_environment(vis::DrakeVisualizer.Visualizer, env::Environment)
   end
 end
 
-function playback_trajectory(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSimulationDataArray; options=nothing)
+function playback_trajectory(vis::DrakeVisualizer.Visualizer, traj::Trajectory{BoxRobotSimulationData}; options=nothing, playback_speed=1.0)
   """
   Draws each frame of the trajectory, sleeps for dt seconds in between draws
+  Arguments:
+    - playback_speed: 1.0 is 1X which is real time
   """
 
   # default for options
@@ -99,20 +102,36 @@ function playback_trajectory(vis::DrakeVisualizer.Visualizer, data_array::BoxRob
     options = BoxRobotVisualizerOptions()
   end
 
-  dt = data_array.tBreaks[2] - data_array.tBreaks[1]
-  data = data_array.data
-  num_time_steps = length(data_array.tBreaks)
+  t_start = traj.time[1]
+  t_end = traj.time[end]
+  t = copy(t_start)
+  dt = options.playback_dt * playback_speed
+  sleep_time = options.playback_dt
+  # dt = traj.time[2] - traj.time[1]
+  data = traj.data
 
-  for idx=1:num_time_steps
-    state = data[idx].state
-    input = data[idx].input
+  while (t <= t_end)
+    d = traj(t)
+    state = d.state
+    input = d.input
     draw_box_robot_state(vis::DrakeVisualizer.Visualizer, state::BoxRobotState;  options=options, input=input)
-    sleep(dt)
+    sleep(sleep_time)
+    t += dt
   end
+
+
+  # for idx=1:num_time_steps
+  #   t = t_start + (idx - 1)*dt
+  #   d = eval(traj, t)
+  #   state = d.state
+  #   input = d.input
+  #   draw_box_robot_state(vis::DrakeVisualizer.Visualizer, state::BoxRobotState;  options=options, input=input)
+  #   sleep(dt)
+  # end
 
 end
 
-function slider_playback(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSimulationDataArray; options=nothing)
+function slider_playback(vis::DrakeVisualizer.Visualizer, traj::Trajectory{BoxRobotSimulationData}; options=nothing)
   """
   Constructs slider that can draw the trajectory
   """
@@ -122,14 +141,13 @@ function slider_playback(vis::DrakeVisualizer.Visualizer, data_array::BoxRobotSi
     options = BoxRobotVisualizerOptions()
   end
 
-  dt = data_array.tBreaks[2] - data_array.tBreaks[1]
-  data = data_array.data
-  num_time_steps = length(data_array.tBreaks)
+  dt = traj.time[2] - traj.time[1]
+  data = traj.data
+  num_time_steps = length(data)
 
   @manipulate for idx=1:num_time_steps
     state = data[idx].state
     input = data[idx].input
     draw_box_robot_state(vis::DrakeVisualizer.Visualizer, state::BoxRobotState;  options=options, input=input)
-    sleep(dt)
   end
 end

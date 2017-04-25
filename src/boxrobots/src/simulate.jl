@@ -6,10 +6,6 @@ type BoxRobotSimulationData{T <: BoxRobotController}
   controller_data::BoxRobotControllerData{T}
 end
 
-type BoxRobotSimulationDataArray
-  tBreaks::Vector{Float64}
-  data::Vector{BoxRobotSimulationData}
-end
 function simulate(robot::BoxRobot, state::BoxRobotState, input::BoxRobotInput, dt::Float64)
   """
   Simulate the system for dt seconds.
@@ -247,6 +243,6 @@ function simulate_tspan(robot::BoxRobot, controller::BoxRobotController, initial
     state, data[i] = simulate(robot, controller, state, t, dt)
   end
 
-  return BoxRobotSimulationDataArray(tBreaks, data)
+  return Trajectory(tBreaks, data)
 
 end

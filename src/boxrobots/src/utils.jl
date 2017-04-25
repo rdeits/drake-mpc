@@ -101,5 +101,17 @@ function contained_in_h_representation(hRep::SimpleHRepresentation,
   else
     return true
   end
+end
 
+function (traj::Trajectory)(t)
+  """
+  Index into the trajectory and return the data
+  Find largest idx such that traj.time[idx] <= t.
+  idx defaults to 1 if t < min(traj.time)
+  Return:
+    -traj.data[idx]
+  """
+  idx = searchsortedlast(traj.time, t)
+  idx = max(idx, 1)
+  return traj.data[idx]
 end
