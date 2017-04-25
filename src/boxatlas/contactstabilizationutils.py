@@ -12,124 +12,36 @@ import boxatlas as box
 from contactstabilization import BoxAtlasContactStabilization
 
 
-# FieldContainer is copied from director.fieldcontainer
-def _repr(self, indent=4):
-    if isinstance(self, FieldContainer):
-        return _fields_repr(self, indent)
-    if isinstance(self, vtk.vtkTransform):
-        return _transform_repr(self, indent)
-    if isinstance(self, dict):
-        return _dict_repr(self, indent)
-    if isinstance(self, list) and len(self) and not isinstance(self[0], (int, float)):
-        return _list_repr(self, indent)
-    else:
-        return repr(self)
-
-class FieldContainer(object):
-
-    __repr__ = _repr
-
-    def __init__(self, **kwargs):
-        self._set_fields(**kwargs)
-
-    def __iter__(self):
-        for name in self._fields:
-            yield name, getattr(self, name)
-
-    def _add_fields(self, **fields):
-        if not hasattr(self, '_fields'):
-            object.__setattr__(self, '_fields', fields.keys())
-        else:
-            object.__setattr__(self, '_fields', list(set(self._fields + fields.keys())))
-        for name, value in fields.iteritems():
-            object.__setattr__(self, name, value)
-
-    def _set_fields(self, **fields):
-        if not hasattr(self, '_fields'):
-            self._add_fields(**fields)
-        else:
-            for name, value in fields.iteritems():
-                self.__setattr__(name, value)
-
-    def __getitem__(self, name):
-        return getattr(self, name)
-
-    def __setitem__(self, name, value):
-        setattr(self, name, value)
-
-    def __len__(self):
-        return len(self._fields)
-
-    def __contains__(self, name):
-        return name in self._fields
-
-    def __setattr__(self, name, value):
-        if hasattr(self, name):
-            object.__setattr__(self, name, value)
-        else:
-            raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
-
-    def __delattr__(self, name):
-        if hasattr(self, name):
-            del self._fields[self._fields.index(name)]
-            object.__delattr__(self, name)
-        else:
-            raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
-
-class BoxAtlasDefaults(FieldContainer):
-    def __init__(self, robot=None, env=None, initial_state=None, desired_state=None, params=None):
-        FieldContainer.__init__(self, robot=robot, env=env, initial_state=initial_state, desired_state=desired_state, params=params, dt=0.05, num_time_steps=20)
+class BoxAtlasDefaults(object):
 
     @staticmethod
-    def fill_with_defaults(defaults):
-        """
-        Fills in any None fields of defaults by constructing default values using
-        ContactStabilizationUtils static methods
-        :param defaults:
-        :return:
-        """
-
+    def make_defaults(**kwargs):
         CSU = ContactStabilizationUtils
-        if defaults.robot is None:
-            defaults.robot = CSU.make_box_atlas()
+        defaults = dict()
+        defaults["num_time_steps"] = 20
+        defaults["dt"] = 0.05
+        defaults["options"] = None
+        defaults["contact_assignments"] = None
+        defaults["robot"] = CSU.make_box_atlas()
+        defaults["env"] = CSU.make_environment()
+        defaults["initial_state"] = CSU.make_default_initial_state(defaults["robot"])
+        defaults["desired_state"] = CSU.make_default_desired_state(defaults["robot"])
+        defaults["params"] = CSU.get_default_optimization_parameters()
 
-        if defaults.env is None:
-            defaults.env = CSU.make_environment()
-
-        if defaults.initial_state is None:
-            defaults.initial_state = CSU.make_default_initial_state(defaults.robot)
-
-        if defaults.desired_state is None:
-            defaults.desired_state = CSU.make_default_desired_state(defaults.robot)
-
-        if defaults.params is None:
-            defaults.params = CSU.get_default_optimization_parameters()
-
-
+        defaults.update(kwargs)
         return defaults
 
     @staticmethod
     def copy_with_kwargs(d, **kwargs):
         """
-        Creates new BoxAtlasDefaults with some fields copied from d, and others
-        filled in with the kwargs
-        :param d: BoxAtlasDefaults with no None fields
+        Copies d and overwrites anything in kwargs
+        :param d:
         :param kwargs:
-        :return: BoxAtlasDefaults
+        :return:
         """
-
-        d_new = BoxAtlasDefaults()
-        for key, _ in d_new:
-            val = None
-            if key in kwargs:
-                val = kwargs[key]
-
-            if val is None:
-                val = getattr(d, key)
-
-            setattr(d_new, key, val)
-
-        return d_new
+        d_copy = d.copy()
+        d_copy.update(kwargs)
+        return d_copy
 
 
 def get_limb_idx_map():

@@ -198,6 +198,22 @@ class MixedIntegerTrajectoryOptimization(mp.MathematicalProgram):
 
 class BoxAtlasVariables(object):
     def __init__(self, prog, ts, num_limbs, dim, initial_state, contact_assignments=None, options=None):
+        """
+
+        :param prog:
+        :param ts:
+        :param num_limbs:
+        :param dim:
+        :param initial_state:
+        :param contact_assignments: Dict with key = limb_idx, val = contact_assigment
+        for that set of binary variables. contact_assigment must be a list with
+        length = num_time_steps = len(ts) - 1. If value of
+        val = contact_assigment[idx] is not None, then the constraint that the
+        appropriate binary variable be equal to 'val' is added. Note that this will
+        result in that binary variable being removed from the optimization during
+        the presolve.
+        :param options:
+        """
 
         if options is None:
             options = dict()
@@ -214,33 +230,60 @@ class BoxAtlasVariables(object):
         for q in self.qlimb:
             prog.add_continuity_constraints(q)
         self.contact_force = [prog.new_piecewise_polynomial_variable(ts, dim, 0) for k in range(num_limbs)]
+        self.contact= [prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary") for k in range(num_limbs)]
+
+
+        # if contact_assignments was passed in then constrain those variables
+        if contact_assignments is not None:
+            print("contact assigments passed in")
+            num_time_steps = len(ts) - 1
+            for limb_idx, contact_sequence in contact_assignments.iteritems():
+                contact_vars = self.contact[limb_idx]
+                assert(len(contact_sequence) == num_time_steps)
+                for idx, c in enumerate(contact_vars.at_all_breaks()):
+                    # don't index past end of contact_sequence list
+                    c = c[0]
+                    if (idx > num_time_steps - 1):
+                        break
+
+                    # if the value of the assignment is not None, then
+                    # add a constraint to the MIQP that pins down that
+                    # binary variable
+                    val = contact_sequence[idx]
+                    if val is not None:
+                        assert(val in [0,1])
+                        prog.AddLinearConstraint(c == val)
 
 
 
-
-
-        if contact_assignments is None:
-            contact_assignments = [None for i in range(num_limbs)]
-        assert len(contact_assignments) == num_limbs
-        self.contact = [None]*num_limbs
-        self.contact_lambda = [None]*num_limbs
+        # old stuff
+        self.contact_lambda = [None] * num_limbs
         self.contact_sequence_array = [None]*num_limbs
+        # DEPRECATED
 
-        for idx, c in enumerate(contact_assignments):
-            if c is None:
-                if options['use_lambda_contact_formulation']:
-                    # this is lambda formulation where we enumerate potential contact sequences
-                    initial_contact_state = initial_state.contact_indicator[idx]
-                    contact_vars = LambdaContactFormulation.addContactVariables(prog,
-                                                                                ts,
-                                                                                initial_contact_state)
-                    self.contact_lambda[idx] = contact_vars.contact_lambda
-                    self.contact[idx] = contact_vars.contact
-                    self.contact_sequence_array[idx] = contact_vars.contact_sequence_array
-                else: # standard formulation
-                    self.contact[idx] = prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary")
-            else:
-                self.contact[idx] = c
+        # if contact_assignments is None:
+        #     contact_assignments = [None for i in range(num_limbs)]
+        #
+        # assert len(contact_assignments) == num_limbs
+        # self.contact = [None]*num_limbs
+        # self.contact_lambda = [None]*num_limbs
+        # self.contact_sequence_array = [None]*num_limbs
+        #
+        # for idx, c in enumerate(contact_assignments):
+        #     if c is None:
+        #         if options['use_lambda_contact_formulation']:
+        #             # this is lambda formulation where we enumerate potential contact sequences
+        #             initial_contact_state = initial_state.contact_indicator[idx]
+        #             contact_vars = LambdaContactFormulation.addContactVariables(prog,
+        #                                                                         ts,
+        #                                                                         initial_contact_state)
+        #             self.contact_lambda[idx] = contact_vars.contact_lambda
+        #             self.contact[idx] = contact_vars.contact
+        #             self.contact_sequence_array[idx] = contact_vars.contact_sequence_array
+        #         else: # standard formulation
+        #             self.contact[idx] = prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary")
+        #     else:
+        #         self.contact[idx] = c # c is a PiecewisePolynomial here
 
     def all_state_variables(self):
         x = []
