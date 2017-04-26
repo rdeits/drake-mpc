@@ -8,7 +8,7 @@ using CDDLib: CDDLibrary
 include("types.jl")
 include("utils.jl")
 include("control.jl")
-include("MIQPcontroller.jl")
+include("controllers/MIQPcontroller.jl")
 include("simulate.jl")
 include("visualize.jl")
 include("defaults.jl")

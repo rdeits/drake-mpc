@@ -155,6 +155,24 @@ class BoxAtlasInput(object):
         self.force_indicator = force_indicator
 
 
+    @staticmethod
+    def get_input_from_soln_data(t, solnData):
+        """
+        Gets input from soln_data. Additionally fills in force_indicator field
+        :param t: time in plan
+        :param solnData: SolutionData namedtuple
+        :return: BoxAtlasInput with force_indicator field filled in
+        """
+        limb_idx_map = solnData.opt.robot.limb_idx_map
+        box_atlas_input = solnData.inputs(t)
+        for limb_name, limb_idx in limb_idx_map.iteritems():
+            contact_indicator = solnData.contact_indicator[limb_idx](t)[0]
+            # contact_indicator should always be zero or 1, but we want to convert it into
+            # a boolean for passing to Julia
+            box_atlas_input.force_indicator[limb_idx] = contact_indicator > 0.5
+
+        return box_atlas_input
+
 Surface = namedtuple("Surface", ["pose_constraints", "force_constraints"])
 
 class Environment(object):
