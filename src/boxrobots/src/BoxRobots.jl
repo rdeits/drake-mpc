@@ -9,6 +9,7 @@ include("types.jl")
 include("utils.jl")
 include("control.jl")
 include("controllers/MIQPcontroller.jl")
+include("controllers/simpleinnerloopcontroller.jl")
 include("simulate.jl")
 include("visualize.jl")
 include("defaults.jl")
@@ -49,6 +50,7 @@ export
   SimpleBoxAtlasController,
   MIQPController,
   SimpleBoxAtlasControllerData,
+  SimpleInnerLoopController,
   simple_controller_from_damping_ratio
   convert_box_atlas_input_from_python,
   compute_control_input
