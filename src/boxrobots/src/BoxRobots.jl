@@ -10,6 +10,7 @@ include("utils.jl")
 include("control.jl")
 include("controllers/MIQPcontroller.jl")
 include("controllers/simpleinnerloopcontroller.jl")
+include("controllers/QPinnerloopcontroller.jl")
 include("simulate.jl")
 include("visualize.jl")
 include("defaults.jl")
@@ -51,9 +52,16 @@ export
   MIQPController,
   SimpleBoxAtlasControllerData,
   SimpleInnerLoopController,
+
   simple_controller_from_damping_ratio
   convert_box_atlas_input_from_python,
-  compute_control_input
+  compute_control_input,
+
+# QPInnerLoopController
+export
+  QPInnerLoopController,
+  extract_contact_assignment_from_plan,
+  compute_contact_assignment
 
 # utils
 export
