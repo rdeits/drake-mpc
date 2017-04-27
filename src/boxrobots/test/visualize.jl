@@ -7,6 +7,9 @@
   vis_options = br.BoxRobotVisualizerOptions(force_arrow_normalizer=mass*abs(gravity[end]))
 
   DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window();
+  println("waiting for visualizer to start up")
+  sleep(5) # let visualizer start up
+
   vis = Visualizer()
   delete!(vis)
   br.draw_environment(vis,env)
