@@ -29,7 +29,8 @@ export
   LimbInputType,
   ConstantVelocityLimbInput,
   ConstantAccelerationLimbInput,
-  BoxRobotInput
+  BoxRobotInput,
+  ContactState
 
 # visualization
 export
@@ -59,15 +60,23 @@ export
 
 # QPInnerLoopController
 export
+  ContactSwitch,
+  ContactSwitchType,
+  MakingContact,
+  BreakingContact,
   QPInnerLoopController,
   extract_contact_assignment_from_plan,
-  compute_contact_assignment
+  compute_contact_assignment,
+  convert_contact_assignment_to_python,
+  make_contact_plan,
+  get_contact_state_from_plan,
 
 # utils
 export
   h_representation_from_bounds,
   polyhedron_from_bounds,
-  convert_polyhedron_to_3d
+  convert_polyhedron_to_3d,
+  contact_state_from_robot_state
 
 # defaults
 export

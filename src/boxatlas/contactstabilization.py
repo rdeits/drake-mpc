@@ -251,7 +251,7 @@ class BoxAtlasVariables(object):
 
         # if contact_assignments was passed in then constrain those variables
         if contact_assignments is not None:
-            print("contact assigments passed in")
+            print("contact assignments passed in")
             num_time_steps = len(ts) - 1
             for limb_idx, contact_sequence in contact_assignments.iteritems():
                 contact_vars = self.contact[limb_idx]
