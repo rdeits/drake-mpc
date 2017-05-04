@@ -1,14 +1,7 @@
 # Wrapper for BoxAtlasContactStabilization to facilitate feedback control
-import numpy as np
-import matplotlib.pyplot as plt
-from collections import namedtuple
+
 # custom imports
-from irispy import Polyhedron
-from utils.polynomial import Polynomial
-from utils.piecewise import Piecewise
-import boxatlas as box
 from contactstabilization import BoxAtlasContactStabilization
-from contactstabilizationutils import ContactStabilizationUtils as CSU
 from contactstabilizationutils import BoxAtlasDefaults
 
 
