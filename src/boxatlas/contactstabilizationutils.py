@@ -131,8 +131,9 @@ class ContactStabilizationUtils:
         return params
 
 
+    # DEPRECATED
     @staticmethod
-    def make_contact_assignment(dt, num_time_steps, constrained_limbs=None):
+    def make_contact_assignment_old(dt, num_time_steps, constrained_limbs=None):
         """
         @inputs
         constrained_limbs: should be a dict with limb_name and value to which it is constrained
@@ -160,6 +161,32 @@ class ContactStabilizationUtils:
             contact_assignments[limb_idx] = Piecewise(domain,
                                                       [Polynomial(np.array([[val]]))
                                                        for j in range(len(domain) - 1)])
+        return contact_assignments
+
+    @staticmethod
+    def make_contact_assignment(dt, num_time_steps, constrained_limbs=None):
+        """
+        @inputs
+        constrained_limbs: should be a dict with limb_name and value to which it is constrained
+
+        default:
+            both feet to always be in contact,
+            right hand never to be in contact.
+        """
+
+        if constrained_limbs is None:
+            constrained_limbs = dict()
+            constrained_limbs["right_leg"] = 1  # persistent contact
+            constrained_limbs["left_leg"] = 1  # persistent contact
+            constrained_limbs["right_arm"] = 0  # not in contact
+
+        contact_assignments = dict()
+        limb_idx_map = ContactStabilizationUtils.limb_idx_map
+
+        for limb_name, val in constrained_limbs.iteritems():
+            limb_idx = limb_idx_map[limb_name]
+            contact_assignments[limb_idx] = [val]*num_time_steps
+
         return contact_assignments
 
     @staticmethod

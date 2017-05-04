@@ -15,7 +15,7 @@ from boxatlas.boxatlas import BoxAtlasState, BoxAtlasInput
 SolutionData = namedtuple("SolutionData",
                           ["opt" ,"states", "inputs", "contact_indicator", "ts", "solve_time"])
 
-ContactVariables = namedtuple("ContactVariables", ["contact_lambda", "contact",
+ContactVariables = namedtuple("ContactVariables", ["contact_lambda",
                                                    "contact_sequence_array"])
 
 
@@ -233,7 +233,7 @@ class BoxAtlasVariables(object):
 
         if options is None:
             options = dict()
-            options['use_lambda_contact_fomulation'] = False
+            options['use_lambda_contact_formulation'] = False
 
 
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
@@ -275,6 +275,20 @@ class BoxAtlasVariables(object):
         # old stuff
         self.contact_lambda = [None] * num_limbs
         self.contact_sequence_array = [None]*num_limbs
+
+
+        if options['use_lambda_contact_formulation']:
+            print ('using lambda contact formulation')
+            num_time_steps = len(ts) - 1
+            for limb_idx in range(num_limbs):
+                initial_contact_state = initial_state.contact_indicator[limb_idx]
+                lambda_vars = LambdaContactFormulation.addContactVariables(prog, num_time_steps, initial_contact_state)
+
+                contact_vars = self.contact[limb_idx]
+                LambdaContactFormulation.addConstraints(prog, num_time_steps,
+                                                        contact_vars, lambda_vars)
+
+
         # DEPRECATED
 
         # if contact_assignments is None:
@@ -321,7 +335,7 @@ class BoxAtlasVariables(object):
 
 class LambdaContactFormulation(object):
     @staticmethod
-    def addContactVariables(prog, ts, initial_contact_state):
+    def addContactVariables(prog, num_time_steps, initial_contact_state):
         """
 
         :param prog: MathematicalProgram inside BoxAtlasContactStabilization
@@ -331,7 +345,6 @@ class LambdaContactFormulation(object):
         :param vars: BoxAtlasVarriables
         :return:
         """
-        num_time_steps = len(ts) - 1
         contact_sequence_array = LambdaContactFormulation.enumerateContactSequences(num_time_steps, initial_contact_state)
 
         # vars will be called contact_lambda
@@ -345,12 +358,37 @@ class LambdaContactFormulation(object):
 
         # now must create contact variables from these binary vars + contact_sequence_array
 
-        contact = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array)
+        # contact = LambdaContactFormulation.constructContactPiecewisePolynomial(ts, contact_lambda, contact_sequence_array)
 
         contact_vars = ContactVariables(contact_lambda=contact_lambda,
-                                        contact=contact,
                                         contact_sequence_array=contact_sequence_array)
         return contact_vars
+
+    @staticmethod
+    def addConstraints(prog, num_time_steps, contact_vars, lambda_vars):
+        """
+        Adds constraints between lambda and normal contact variables
+        :param prog:
+        :param contact_vars:
+        :param lambda_vars:
+        :return:
+        """
+
+        contact_lambda = lambda_vars.contact_lambda
+        contact_sequence_array = lambda_vars.contact_sequence_array
+
+        for idx, c in enumerate(contact_vars.at_all_breaks()):
+            # don't index past end of contact_sequence list
+            c = c[0]
+            if (idx > num_time_steps - 1):
+                break
+
+            # Add constraint to MIQP that enforces the lambda formulation
+            val = np.dot(contact_sequence_array[:, idx], contact_lambda)
+            prog.AddLinearConstraint(c == val)
+
+
+
 
     @staticmethod
     def enumerateContactSequences(num_time_steps, initial_contact_state):
