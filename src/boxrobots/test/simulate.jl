@@ -36,3 +36,24 @@ br.playback_trajectory(vis, data_array; options=vis_options)
 
 # think about putting some asserts in as to where the sim should end
 end
+
+@testset "simulate with QP controller" begin
+# attempt to visualize a state
+DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window();
+vis = Visualizer()
+delete!(vis)
+env, robot = br.make_robot_and_environment()
+robot_state = br.make_robot_state()
+robot_state.centroidal_dynamics_state.vel[1] = -1.75
+br.draw_environment(vis, env)
+mass = robot.mass
+gravity = robot.gravity
+vis_options = br.BoxRobotVisualizerOptions(force_arrow_normalizer=mass*abs(gravity[end]))
+
+miqp_controller = br.MIQPController()
+t = 0.0
+dt = 0.05
+duration = 0.5
+@time traj = br.simulate_tspan(robot, miqp_controller, robot_state, dt, duration)
+br.playback_trajectory(vis, traj; options=vis_options)
+end

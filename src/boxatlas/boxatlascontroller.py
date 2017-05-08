@@ -34,18 +34,6 @@ class BoxAtlasController:
 
         return opt
 
-    def extract_control_input_from_soln(self, solnData):
-        # extract contact indicator and add it to
-        t = 0
-        box_atlas_input = solnData.inputs(t)
-        for limb_name, limb_idx in self.robot.limb_idx_map.iteritems():
-            contact_indicator = solnData.contact_indicator[limb_idx](t)[0]
-            # contact_indicator should always be zero or 1, but we want to convert it into
-            # a boolean for passing to Julia
-            box_atlas_input.force_indicator[limb_idx] = contact_indicator > 0.5
-
-        return box_atlas_input
-
     def compute_control_input(self, initial_state, **kwargs):
         opt = self.construct_contact_stabilization_optimization(initial_state, **kwargs)
         solnData = opt.solve()

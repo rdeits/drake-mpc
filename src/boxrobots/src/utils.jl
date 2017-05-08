@@ -1,4 +1,5 @@
 using Polyhedra: polyhedron, Polyhedron
+using PyCall
 
 function convert_vector_to_3d(v::Vector{Float64})
   """
@@ -114,4 +115,43 @@ function (traj::Trajectory)(t)
   idx = searchsortedlast(traj.time, t)
   idx = max(idx, 1)
   return traj.data[idx]
+end
+
+function contact_state_from_robot_state(state::BoxRobotState)
+  contact_state = ContactState()
+
+  for (limb_sym, limb_state) in state.limb_states
+    contact_state[limb_sym] = limb_state.in_contact
+  end
+
+  return contact_state
+end
+
+function clip_time_to_plan_limits(t_plan, soln_data::PyObject)
+  t_plan_end = soln_data[:ts][end] - 1e-3
+  return min(t_plan, t_plan_end)
+end
+
+function has_next_contact_switch(contact_plan::ContactPlan)
+  return contact_plan.next_contact_state_idx <= length(contact_plan.plan.time)
+end
+
+function get_next_contact_switch_time(contact_plan::ContactPlan)
+  if has_next_contact_switch(contact_plan)
+    return contact_plan.plan.time[contact_plan.next_contact_state_idx]
+  else
+    return Inf
+  end
+end
+
+function get_next_contact_state(contact_plan::ContactPlan)
+  if has_next_contact_switch(contact_plan)
+    return contact_plan.plan.data[contact_plan.next_contact_state_idx]
+  else
+    return error("there are no more contact switches in this plan")
+  end
+end
+
+function increment_next_contact_state_idx!(contact_plan::ContactPlan)
+  contact_plan.next_contact_state_idx += 1
 end

@@ -40,6 +40,7 @@ type BoxRobotState{T}
   limb_states::Dict{Symbol, LimbState{T}}
 end
 
+typealias ContactState Dict{Symbol, Bool}
 
 abstract LimbInputType
 immutable ConstantVelocityLimbInput <: LimbInputType end
@@ -67,4 +68,9 @@ end
 type Trajectory{T}
   time::AbstractVector # sorted vector of time
   data::AbstractVector{T}
+end
+
+type ContactPlan
+  plan::Trajectory{ContactState}
+  next_contact_state_idx::Int64
 end

@@ -8,7 +8,9 @@ using CDDLib: CDDLibrary
 include("types.jl")
 include("utils.jl")
 include("control.jl")
-include("MIQPcontroller.jl")
+include("controllers/MIQPcontroller.jl")
+include("controllers/simpleinnerloopcontroller.jl")
+include("controllers/QPinnerloopcontroller.jl")
 include("simulate.jl")
 include("visualize.jl")
 include("defaults.jl")
@@ -27,7 +29,8 @@ export
   LimbInputType,
   ConstantVelocityLimbInput,
   ConstantAccelerationLimbInput,
-  BoxRobotInput
+  BoxRobotInput,
+  ContactState
 
 # visualization
 export
@@ -49,15 +52,31 @@ export
   SimpleBoxAtlasController,
   MIQPController,
   SimpleBoxAtlasControllerData,
+  SimpleInnerLoopController,
+
   simple_controller_from_damping_ratio
   convert_box_atlas_input_from_python,
-  compute_control_input
+  compute_control_input,
+
+# QPInnerLoopController
+export
+  ContactSwitch,
+  ContactSwitchType,
+  MakingContact,
+  BreakingContact,
+  QPInnerLoopController,
+  extract_contact_assignment_from_plan,
+  compute_contact_assignment,
+  convert_contact_assignment_to_python,
+  make_contact_plan,
+  get_contact_state_from_plan,
 
 # utils
 export
   h_representation_from_bounds,
   polyhedron_from_bounds,
-  convert_polyhedron_to_3d
+  convert_polyhedron_to_3d,
+  contact_state_from_robot_state
 
 # defaults
 export

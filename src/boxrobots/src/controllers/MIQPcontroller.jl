@@ -53,11 +53,12 @@ function compute_control_input(robot::BoxRobot, controller::MIQPController, stat
   """
   # call into python to do the MIQP solve
   python_controller = controller.python_controller
-  robot_python = python_controller[:defaults][:robot]
+  robot_python = python_controller[:robot]
   state_python = convert_box_robot_state_to_python(robot_python, state)
   opt = python_controller[:construct_contact_stabilization_optimization](state_python)
   soln_data = pycall(opt[:solve], PyObject)
-  control_input_python = python_controller[:extract_control_input_from_soln](soln_data)
+  t_plan = 0 # always extract first control input
+  control_input_python = boxatlastypes.BoxAtlasInput[:get_input_from_soln_data](0,soln_data)
 
   # convert python results to correct julia types
   box_robot_input = convert_box_atlas_input_from_python(control_input_python)
