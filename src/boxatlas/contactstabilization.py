@@ -232,8 +232,7 @@ class BoxAtlasVariables(object):
         """
 
         if options is None:
-            options = dict()
-            options['use_lambda_contact_formulation'] = False
+            options = BoxAtlasContactStabilization.make_default_options()
 
 
         self.qcom = prog.new_piecewise_polynomial_variable(ts, dim, 2)
@@ -277,7 +276,7 @@ class BoxAtlasVariables(object):
         self.contact_sequence_array = [None]*num_limbs
 
 
-        if options['use_lambda_contact_formulation']:
+        if options['contact_formulation'] == "lambda":
             print ('using lambda contact formulation')
             num_time_steps = len(ts) - 1
             for limb_idx in range(num_limbs):
@@ -288,32 +287,16 @@ class BoxAtlasVariables(object):
                 LambdaContactFormulation.addConstraints(prog, num_time_steps,
                                                         contact_vars, lambda_vars)
 
+        if options["contact_formulation"] == "alpha":
+            print("using alpha contact formulation")
+            num_time_steps = len(ts) - 1
+            for limb_idx in range(num_limbs):
+                initial_contact_state = initial_state.contact_indicator[limb_idx]
+                alpha_vars = AlphaContactFormulation.addVariablesToOptimization(prog, num_time_steps)
 
-        # DEPRECATED
+                contact_vars = self.contact[limb_idx]
+                AlphaContactFormulation.addConstraintsOnContactVariables(prog,contact_vars, alpha_vars, num_time_steps, initial_contact_state)
 
-        # if contact_assignments is None:
-        #     contact_assignments = [None for i in range(num_limbs)]
-        #
-        # assert len(contact_assignments) == num_limbs
-        # self.contact = [None]*num_limbs
-        # self.contact_lambda = [None]*num_limbs
-        # self.contact_sequence_array = [None]*num_limbs
-        #
-        # for idx, c in enumerate(contact_assignments):
-        #     if c is None:
-        #         if options['use_lambda_contact_formulation']:
-        #             # this is lambda formulation where we enumerate potential contact sequences
-        #             initial_contact_state = initial_state.contact_indicator[idx]
-        #             contact_vars = LambdaContactFormulation.addContactVariables(prog,
-        #                                                                         ts,
-        #                                                                         initial_contact_state)
-        #             self.contact_lambda[idx] = contact_vars.contact_lambda
-        #             self.contact[idx] = contact_vars.contact
-        #             self.contact_sequence_array[idx] = contact_vars.contact_sequence_array
-        #         else: # standard formulation
-        #             self.contact[idx] = prog.new_piecewise_polynomial_variable(ts, 1, 0, kind="binary")
-        #     else:
-        #         self.contact[idx] = c # c is a PiecewisePolynomial here
 
     def all_state_variables(self):
         x = []
@@ -441,6 +424,57 @@ class LambdaContactFormulation(object):
         contact = Piecewise(ts, contact_piecewise_functions)
         return contact
 
+class AlphaContactFormulation(object):
+
+    @staticmethod
+    def addVariablesToOptimization(prog, num_time_steps):
+        """
+
+        :param prog: MathematicalProgram inside BoxAtlasContactStabilization
+        :param ts:
+        :param initial_state:
+        :param limb_idx:
+        :param vars: BoxAtlasVarriables
+        :return:
+        """
+        alpha_plus = prog.NewBinaryVariables(1, num_time_steps)
+        alpha_minus = prog.NewBinaryVariables(1, num_time_steps)
+
+        for idx in xrange(0,num_time_steps):
+            val = alpha_plus[0,idx] + alpha_minus[0,idx]
+            prog.AddLinearConstraint(val <= 1)
+
+        # can have at most one making and breaking contact over the course of a pln
+        # this is a SOS1 constraint
+        prog.AddLinearConstraint(np.sum(alpha_plus) <= 1)
+        prog.AddLinearConstraint(np.sum(alpha_minus) <= 1)
+
+        vars = dict()
+        vars['alpha_plus'] = alpha_plus
+        vars['alpha_minus'] = alpha_minus
+        return vars
+
+    @staticmethod
+    def addConstraintsOnContactVariables(prog, contact_vars, alpha_vars, num_time_steps, initial_contact_state):
+
+        alpha_plus = alpha_vars['alpha_plus']
+        alpha_minus = alpha_vars['alpha_minus']
+
+        for idx, c in enumerate(contact_vars.at_all_breaks()):
+            if (idx > num_time_steps - 1):
+                break
+
+            c = c[0]
+
+            sum_test = np.sum(alpha_plus[:(idx+1)])
+
+            val = initial_contact_state + np.sum(alpha_plus[0,:(idx+1)])\
+                  - np.sum(alpha_minus[0,:(idx+1)])
+
+
+            prog.AddLinearConstraint(c == val)
+
+
 
 class BoxAtlasContactStabilization(object):
     def __init__(self, robot, initial_state, env, desired_state,
@@ -538,6 +572,10 @@ class BoxAtlasContactStabilization(object):
             self.prog.add_kinematic_constraints(self.vars.qlimb[k],
                                                 self.vars.qcom,
                                                 self.robot.limb_bounds[k])
+
+            # if self.options['add_contact_switch_constraints']:
+            #     print("adding contact switch constraints")
+            #     self.add_contact_switch_constraints()
             # switches = self.prog.count_contact_switches(self.vars.contact[k])
             # self.prog.AddLinearConstraint(switches <= 2)
         # for k in [1, 2]:
@@ -699,6 +737,7 @@ class BoxAtlasContactStabilization(object):
     @staticmethod
     def make_default_options():
         options = dict()
-        options['use_lambda_contact_formulation'] = False
+        options['contact_formulation'] = "normal"
+        options['add_contact_switch_constraints'] = False
         return options
 
