@@ -1,229 +1,25 @@
 import numpy as np
 import scipy.linalg as linalg
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 import itertools
 import time
 from utils.ndpiecewise import NDPiecewise
-from optimization import linear_program, quadratic_program
-from geometry import Polytope
+from pnnls import linear_program
+from gurobi import quadratic_program
+from mpc_tools.geometry import Polytope
 
-
-def plot_input_sequence(u_sequence, t_s, N, u_max=None, u_min=None):
+class MPQPSolver:
     """
-    Plots the input sequence and its bounds as functions of time.
-
-    INPUTS:
-        u_sequence: list with N inputs (2D numpy vectors) of dimension (n_u,1) each
-        t_s: sampling time
-        N: number of steps
-        u_max: upper bound on the input (2D numpy vectors of dimension (n_u,1))
-        u_min: lower bound on the input (2D numpy vectors of dimension (n_u,1))
+    Solves a mp-QP in the form
+    u^*(x) = argmin_u 0.5 u' H u + x' F u
+    subject to G u <= W + E x
     """
 
-    # dimension of the input
-    n_u = u_sequence[0].shape[0]
+    def __init__(self, canonical_qp):
 
-    # time axis
-    t = np.linspace(0,N*t_s,N+1)
-
-    # plot each input element separately
-    for i in range(0, n_u):
-        plt.subplot(n_u, 1, i+1)
-
-        # plot input sequence
-        u_i_sequence = [u_sequence[j][i] for j in range(0,N)]
-        input_plot, = plt.step(t, [u_i_sequence[0]] + u_i_sequence, 'b')
-
-        # plot bounds iff provided
-        if u_max is not None:
-            bound_plot, = plt.step(t, u_max[i,0]*np.ones(t.shape), 'r')
-        if u_min is not None:
-            bound_plot, = plt.step(t, u_min[i,0]*np.ones(t.shape), 'r')
-
-        # miscellaneous options
-        plt.ylabel(r'$u_{' + str(i+1) + '}$')
-        plt.xlim((0.,N*t_s))
-        if i == 0:
-            if u_max is not None or u_min is not None:
-                plt.legend([input_plot, bound_plot], ['Optimal control', 'Control bounds'], loc=1)
-            else:
-                plt.legend([input_plot], ['Optimal control'], loc=1)
-    plt.xlabel(r'$t$')
-
-    return
-
-
-
-def plot_state_trajectory(x_trajectory, t_s, N, x_max=None, x_min=None):
-    """
-    Plots the state trajectory and its bounds as functions of time.
-
-    INPUTS:
-        x_trajectory: list with N+1 states (2D numpy vectors) of dimension (n_x,1) each
-        t_s: sampling time
-        N: number of steps
-        x_max: upper bound on the state (2D numpy vectors of dimension (n_x,1))
-        x_min: lower bound on the state (2D numpy vectors of dimension (n_x,1))
-    """
-
-    # dimension of the state
-    n_x = x_trajectory[0].shape[0]
-
-    # time axis
-    t = np.linspace(0,N*t_s,N+1)
-
-    # plot each state element separately
-    for i in range(0, n_x):
-        plt.subplot(n_x, 1, i+1)
-
-        # plot state trajectory
-        x_i_trajectory = [x_trajectory[j][i] for j in range(0,N+1)]
-        state_plot, = plt.plot(t, x_i_trajectory, 'b')
-
-        # plot bounds iff provided
-        if x_max is not None:
-            bound_plot, = plt.step(t, x_max[i,0]*np.ones(t.shape),'r')
-        if x_min is not None:
-            bound_plot, = plt.step(t, x_min[i,0]*np.ones(t.shape),'r')
-
-        # miscellaneous options
-        plt.ylabel(r'$x_{' + str(i+1) + '}$')
-        plt.xlim((0.,N*t_s))
-        if i == 0:
-            if x_max is not None or x_min is not None:
-                plt.legend([state_plot, bound_plot], ['Optimal trajectory', 'State bounds'], loc=1)
-            else:
-                plt.legend([state_plot], ['Optimal trajectory'], loc=1)
-    plt.xlabel(r'$t$')
-
-    return
-
-
-
-class DTLinearSystem:
-    """
-    Discrete time linear systems in the form x_{k+1} = A*x_k + B*u_k.
-
-    VARIABLES:
-        A: discrete time state transition matrix
-        B: discrete time input to state map
-        n_x: number of sates
-        n_u: number of inputs
-    """
-
-    def __init__(self, A, B):
-        self.A = A
-        self.B = B
-        [self.n_x, self.n_u] = np.shape(B)
-        return
-
-    def evolution_matrices(self, N):
-        """
-        Returns the free and forced evolution matrices for the linear system
-        (i.e. [x_1^T, ...,  x_N^T]^T = free_evolution*x_0 + forced_evolution*[u_0^T, ...,  u_{N-1}^T]^T)
-
-        INPUTS:
-            N: number of steps
-
-        OUTPUTS:
-            free_evolution: free evolution matrix
-            forced_evolution: forced evolution matrix
-        """
-
-        # free evolution of the system
-        free_evolution = np.vstack([np.linalg.matrix_power(self.A,k) for k in range(1, N+1)])
-
-        # forced evolution of the system
-        forced_evolution = np.zeros((self.n_x*N,self.n_u*N))
-        for i in range(0, N):
-            for j in range(0, i+1):
-                forced_evolution[self.n_x*i:self.n_x*(i+1),self.n_u*j:self.n_u*(j+1)] = np.linalg.matrix_power(self.A,i-j).dot(self.B)
-
-        return [free_evolution, forced_evolution]
-
-    def simulate(self, x0, N, u_sequence=None):
-        """
-        Returns the list of states obtained simulating the system dynamics.
-
-        INPUTS:
-            x0: initial state of the system
-            N: number of steps
-            u_sequence: list of inputs [u_1, ..., u_{N-1}]
-
-        OUTPUTS:
-            x_trajectory: list of states [x_0, ..., x_N]
-        """
-
-        # reshape input list if provided
-        if u_sequence is None:
-            u_sequence = np.zeros((self.n_u*N, 1))
-        else:
-            u_sequence = np.vstack(u_sequence)
-
-        # derive evolution matrices
-        [free_evolution, forced_evolution] = self.evolution_matrices(N)
-
-        # derive state trajectory includion initial state
-        if x0.ndim == 1:
-            x0 = np.reshape(x0, (x0.shape[0],1))
-        x = free_evolution.dot(x0) + forced_evolution.dot(u_sequence)
-        x_trajectory = [x0]
-        [x_trajectory.append(x[self.n_x*i:self.n_x*(i+1)]) for i in range(0,N)]
-
-        return x_trajectory
-
-    @staticmethod
-    def from_continuous(t_s, A, B):
-        """
-        Defines a discrete time linear system starting from the continuous time dynamics \dot x = A*x + B*u
-        (the exact zero order hold method is used for the discretization).
-
-        INPUTS:
-            t_s: sampling time
-            A: continuous time state transition matrix
-            B: continuous time input to state map
-
-        OUTPUTS:
-            sys: discrete time linear system
-        """
-
-        # system dimensions
-        n_x = np.shape(A)[0]
-        n_u = np.shape(B)[1]
-
-        # zero order hold (see Bicchi - Fondamenti di Autometica 2)
-        mat_c = np.zeros((n_x+n_u, n_x+n_u))
-        mat_c[0:n_x,:] = np.hstack((A, B))
-        mat_d = linalg.expm(mat_c*t_s)
-
-        # discrete time dynamics
-        A_d = mat_d[0:n_x, 0:n_x]
-        B_d = mat_d[0:n_x, n_x:n_x+n_u]
-
-        sys = DTLinearSystem(A_d, B_d)
-        return sys
-
-class MPCController:
-
-    def __init__(self, canonical_qp, n_u):
         self.qp = canonical_qp
-        self.n_u = n_u
-
-    def feedforward(self, x0):
-        u_feedforward = quadratic_program(self.qp.H, (x0.T.dot(self.qp.F)).T, self.qp.G, self.qp.W + self.qp.E.dot(x0))[0]
-        if any(np.isnan(u_feedforward).flatten()):
-            print('Unfeasible initial condition x_0 = ' + str(x0.tolist()))
-        return u_feedforward
-
-    def feedback(self, x0):
-        u_feedback = self.feedforward(x0)[0:self.n_u]
-        return u_feedback
-
-    def compute_explicit_solution(self):
 
         # start clock
-        tic = time.clock()
+        tic = time.time()
 
         # initialize the search with the origin (to which the empty AS is associated)
         active_set = []
@@ -248,8 +44,8 @@ class MPCController:
 
         # collect all the critical regions and report the result
         self.critical_regions = NDPiecewise(explored_cr)
-        toc = time.clock()
-        print('\nExplicit solution successfully computed in ' + str(toc-tic) + ' s:')
+        toc = time.time()
+        print('\nExplicit solution computed in ' + str(toc-tic) + ' s:')
         print('parameter space partitioned in ' + str(len(self.critical_regions)) + ' critical regions.')
 
     def spread_critical_region(self, cr, cr_to_be_explored, tested_active_sets):
@@ -298,7 +94,7 @@ class MPCController:
 
         # if there is more than one change, nothing can be done...
         if len(active_set_change) > 1:
-            print 'Cannot solve degeneracy with multiple active set changes! The solution of a QP is required...'
+            print('Cannot solve degeneracy with multiple active set changes! The solution of a QP is required...')
             active_set = self.solve_qp_beyond_facet(facet_index, cr)
 
         # if there is one change solve the lp from Theorem 4
@@ -381,174 +177,6 @@ class MPCController:
             if lambda_sol[i] > toll:
                 active_set += [candidate_active_set[i]]
         return active_set
-
-    def feedforward_explicit(self, x0):
-
-        # check that the explicit solution is available
-        if self.critical_regions is None:
-            raise ValueError('Explicit solution not computed yet! First run .compute_explicit_solution() ...')
-
-        # find the CR to which the given state belongs
-        cr_where_x0 = self.critical_regions.lookup(x0)
-
-        # derive explicit solution
-        if cr_where_x0 is not None:
-            u_feedforward = cr_where_x0.u_offset + cr_where_x0.u_linear.dot(x0)
-
-        # if unfeasible return nan
-        else:
-            #print('Unfeasible initial condition x_0 = ' + str(x0.tolist()))
-            u_feedforward = np.zeros((self.qp.G.shape[1], 1))
-            u_feedforward[:] = np.nan
-
-        return u_feedforward
-
-    def feedback_explicit(self, x0):
-        # select only the first control of the feedforward
-        u_feedback = self.feedforward_explicit(x0)[0:self.n_u]
-        return u_feedback
-
-    def optimal_value_function(self, x0):
-
-        # check that the explicit solution is available
-        if self.critical_regions is None:
-            raise ValueError('Explicit solution not computed yet! First run .compute_explicit_solution() ...')
-
-        # find the CR to which the given state belongs
-        cr_where_x0 = self.critical_regions.lookup(x0)
-
-        # derive explicit solution
-        if cr_where_x0 is not None:
-            V = cr_where_x0.V_offset + cr_where_x0.V_linear.dot(x0) + .5*x0.T.dot(cr_where_x0.V_quadratic).dot(x0)
-            V = V[0]
-        else:
-            V = np.nan
-
-        return V
-
-    def merge_critical_regions(self):
-        self.u_offset_list = []
-        self.u_linear_list = []
-        self.cr_families = []
-        for cr in self.critical_regions:
-            cr_family = np.where(np.isclose(cr.u_offset[0], self.u_offset_list))[0]
-            if cr_family and all(np.isclose(cr.u_linear[0,:], self.u_linear_list[cr_family[0]])):
-                self.cr_families[cr_family[0]].append(cr)
-            else:
-                self.cr_families.append([cr])
-                self.u_offset_list.append(cr.u_offset[0])
-                self.u_linear_list.append(cr.u_linear[0,:])
-        print 'Critical regions merged in ', str(len(self.cr_families)), ' sets.'
-        return
-
-
-    def plot_merged_state_partition(self):
-        self.merge_critical_regions()
-        # print self.qp.G
-        colors = ['b','g','r','c','m','y']*len(self.cr_families)
-        plt.figure()
-        for i, family in enumerate(self.cr_families):
-            for cr in family:
-                cr.polytope.plot(color=colors[i])
-
-
-
-        #         plt.text(cr.polytope.center[0], cr.polytope.center[1], str(cr.active_set))
-        #         for j in range(0, len(cr.polytope.minimal_facets)):
-        #             plt.text(cr.polytope.facet_centers(j)[0], cr.polytope.facet_centers(j)[1], str(cr.polytope.minimal_facets[j]))
-        # for family in self.cr_families:
-        #     for cr in family:
-        #         x0a = -.5
-        #         x0b = .5
-
-        #         if cr.active_set == [11,13,15,17,19]:
-        #             # y0a = (cr.polytope.b[0]-cr.polytope.A[0,0]*x0a)/cr.polytope.A[0,1]
-        #             # y0b = (cr.polytope.b[0]-cr.polytope.A[0,0]*x0b)/cr.polytope.A[0,1]
-        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
-        #             # print cr.polytope.b[0],cr.polytope.A[0,:]
-
-        #             # # plt.plot([.47,.47],[-1.5,.5],'black')
-        #             y0a = (cr.polytope.b[1]-cr.polytope.A[1,0]*x0a)/cr.polytope.A[1,1]
-        #             y0b = (cr.polytope.b[1]-cr.polytope.A[1,0]*x0b)/cr.polytope.A[1,1]
-        #             plt.plot([x0a,x0b],[y0a,y0b], 'black')
-        #             #print cr.polytope.b[1],cr.polytope.A[1,:]
-
-        #             # y0a = (cr.polytope.b[10]-cr.polytope.A[10,0]*x0a)/cr.polytope.A[10,1]
-        #             # y0b = (cr.polytope.b[10]-cr.polytope.A[10,0]*x0b)/cr.polytope.A[10,1]
-        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
-        #             print cr.polytope.b[10],cr.polytope.A[10,:]
-
-        #             y0a = (cr.polytope.b[11]-cr.polytope.A[11,0]*x0a)/cr.polytope.A[11,1]
-        #             y0b = (cr.polytope.b[11]-cr.polytope.A[11,0]*x0b)/cr.polytope.A[11,1]
-        #             plt.plot([x0a,x0b],[y0a,y0b], 'black')
-        #             #print cr.polytope.b[11],cr.polytope.A[11,:]
-
-        #             # y0a = -1.5
-        #             # y0b = 1.5
-        #             # x0a = (cr.polytope.b[10]-cr.polytope.A[10,1]*y0a)/cr.polytope.A[10,0]
-        #             # x0b = (cr.polytope.b[10]-cr.polytope.A[10,1]*y0b)/cr.polytope.A[10,0]
-        #             # plt.plot([x0a,x0b],[y0a,y0b], 'black')
-        # # plt.savefig('figures/act_set_2.pdf')
-
-
-
-        return
-
-
-    def plot_state_partition(self):
-        colors = ['b','g','r','c','m','y']*len(self.critical_regions)
-        plt.figure()
-        for i, cr in enumerate(self.critical_regions):
-            cr.polytope.plot(color=colors[i])
-            #plt.savefig('/Users/tobia/Google Drive/UNIPI/PhD/box_atlas/presentation/figures/cr' + str(i+2) + '.pdf')
-        return
-
-    def plot_optimal_control_law(self):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        vertices = np.zeros((0,2))
-        for cr in self.critical_regions:
-            vertices = np.vstack((vertices, cr.polytope.vertices))
-        x_max = max([vertex[0] for vertex in vertices])
-        x_min = min([vertex[0] for vertex in vertices])
-        y_max = max([vertex[1] for vertex in vertices])
-        y_min = min([vertex[1] for vertex in vertices])
-        x = np.arange(x_min, x_max, (x_max-x_min)/100.)
-        y = np.arange(y_min, y_max, (y_max-y_min)/100.)
-        X, Y = np.meshgrid(x, y)
-        zs = np.array([self.feedback_explicit(np.array([[x],[y]])) for x,y in zip(np.ravel(X), np.ravel(Y))])
-        Z = zs.reshape(X.shape)
-        ax.plot_surface(X, Y, Z)
-        ax.set_xlabel(r'$x_1$')
-        ax.set_ylabel(r'$x_2$')
-        ax.set_zlabel(r'$u^*_0$')
-        return
-
-    def plot_optimal_value_function(self):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        vertices = np.zeros((0,2))
-        for cr in self.critical_regions:
-            vertices = np.vstack((vertices, cr.polytope.vertices))
-        x_max = max([vertex[0] for vertex in vertices])
-        x_min = min([vertex[0] for vertex in vertices])
-        y_max = max([vertex[1] for vertex in vertices])
-        y_min = min([vertex[1] for vertex in vertices])
-        x = np.arange(x_min, x_max, (x_max-x_min)/100.)
-        y = np.arange(y_min, y_max, (y_max-y_min)/100.)
-        X, Y = np.meshgrid(x, y)
-        zs = np.array([self.optimal_value_function(np.array([[x],[y]])) for x,y in zip(np.ravel(X), np.ravel(Y))])
-        Z = zs.reshape(X.shape)
-        ax.plot_surface(X, Y, Z)
-        ax.set_xlabel(r'$x_1$')
-        ax.set_ylabel(r'$x_2$')
-        ax.set_zlabel(r'$V^*$')
-        return
-
-
-        
-
-
 
     @staticmethod
     def licq_check(G, active_set, max_cond=1e9):
@@ -640,14 +268,13 @@ class CriticalRegion:
         self.z_linear = - qp.H_inv.dot(G_A.T.dot(self.lambda_A_linear))
 
         # primal original variables explicit solution
-        self.u_offset = self.z_offset
-        self.u_linear = self.z_linear - np.linalg.inv(qp.H).dot(qp.F.T)
+        self.u_offset = self.z_offset - qp.H_inv.dot(qp.F_u)
+        self.u_linear = self.z_linear - qp.H_inv.dot(qp.F_xu.T)
 
-        # optimal value function explicit solution
-        # V = .5*u_feedforward.T.dot(self.qp.H.dot(u_feedforward)) + x0.T.dot(self.qp.F.dot(u_feedforward)) + .5*x0.T.dot(self.qp.Q).dot(x0)
-        self.V_offset = .5*self.u_offset.T.dot(qp.H).dot(self.u_offset)
-        self.V_linear = self.u_offset.T.dot(qp.H).dot(self.u_linear) + self.u_offset.T.dot(qp.F.T)
-        self.V_quadratic = self.u_linear.T.dot(qp.H).dot(self.u_linear) + qp.Q + 2.*qp.F.dot(self.u_linear)
+        # optimal value function explicit solution: V_star = .5 x' V_quadratic x + V_linear x + V_offset
+        self.V_quadratic = self.u_linear.T.dot(qp.F_uu).dot(self.u_linear) + qp.F_xx + 2.*qp.F_xu.dot(self.u_linear)
+        self.V_linear = self.u_offset.T.dot(qp.F_uu).dot(self.u_linear) + self.u_offset.T.dot(qp.F_xu.T) + qp.F_u.T.dot(self.u_linear) + qp.F_x.T
+        self.V_offset = .5*self.u_offset.T.dot(qp.F_uu).dot(self.u_offset) + qp.F_u.T.dot(self.u_offset) + qp.F
 
         # equation (12) (modified: only inactive indices considered)
         lhs_type_1 = G_I.dot(self.z_linear) - S_I
@@ -790,6 +417,6 @@ class CriticalRegion:
         """
 
         # check if x is inside the polytope
-        is_inside = np.max(self.polytope.lhs_min.dot(x) - self.polytope.rhs_min) <= 0
+        is_inside = self.polytope.applies_to(x)
 
         return is_inside
